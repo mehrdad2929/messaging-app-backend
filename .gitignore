@@ -1,0 +1,15 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# dotenv environment variable files
+.env
+.env.*
+!.env.example
+
+# Prisma generated client
+generated/
+
+# Logs
+logs
+*.log
