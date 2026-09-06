@@ -6,8 +6,6 @@ const { userUpdateValidaiton, validate } = require('../middlewares/validation');
 const appRouter = Router();
 
 appRouter.use('/', authRouter);
-//TODO:test user/profile routs we got so far with postmon then commit changes and ask
-//claude to keep track of commiting and remind u when its good to commit
 appRouter.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
