@@ -23,7 +23,7 @@ model User {
     email                     String?                   @unique
     password                  String?
     displayName               String
-    profilePic                String?
+    picture                   String?
     provider                  Provider?
     providerId                String?
     messages                  Message[]                 @relation("UserMessages")
@@ -31,6 +31,9 @@ model User {
     conversationsParticipated ConversationParticipant[]
     createdAt                 DateTime                  @default(now())
     updatedAt                 DateTime                  @updatedAt
+    deletedAt                 DateTime?
+    dmsAsUserA                Dm[]                      @relation("userA")
+    dmsAsUserB                Dm[]                      @relation("userB")
 
     @@unique([provider, providerId])
 }
@@ -61,6 +64,20 @@ model Conversation {
     name                     String?
     messagees                Message[]                 @relation("ConversationMessage")
     conversationParticipants ConversationParticipant[]
+    dm                       Dm?
+}
+
+model Dm {
+    id             Int          @id @default(autoincrement())
+    name           String?
+    conversation   Conversation @relation(fields: [conversationId], references: [id])
+    conversationId Int          @unique
+    dmUserAId      Int
+    dmUserA        User         @relation("userA", fields: [dmUserAId], references: [id])
+    dmUserBId      Int
+    dmUserB        User         @relation("userB", fields: [dmUserBId], references: [id])
+
+    @@unique([dmUserAId, dmUserBId])
 }
 
 enum Role {

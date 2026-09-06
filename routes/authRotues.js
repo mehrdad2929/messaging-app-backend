@@ -1,6 +1,6 @@
 const { Router } = require('express');
 const authController = require('../controllers/authController');
-const { loginValidation, validate, signupValidation } = require("../middlewares/validation");
+const { loginValidation, validate, signupValidation, resetPasswordValidaiton } = require("../middlewares/validation");
 const { authenticateToken } = require('../middlewares/auth');
 const authRouter = Router();
 
@@ -16,6 +16,18 @@ authRouter.post('/auth/login',
     authController.login
 );
 
+authRouter.post('/auth/passwordSetForOAuth',
+    authenticateToken,
+    passwordSetForOAuthValidaiton,
+    validate,
+    authController.passwordSetForOAuth
+);
+authRouter.post('/auth/passwordReset',
+    authenticateToken,
+    resetPasswordValidaiton,
+    validate,
+    authController.passwordReset
+);
 authRouter.get('/auth/google', authController.googleAuth);
 authRouter.get('/auth/google/callback', authController.googleCallback);
 authRouter.get('/auth/github', authController.githubAuth);
