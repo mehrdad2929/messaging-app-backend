@@ -4,35 +4,38 @@ if (process.env.NODE_ENV !== 'production') {
     require('@dotenvx/dotenvx').config();
 }
 const jwt = require('jsonwebtoken');
+const { httpError } = require('../utils/respond');
 
 exports.authenticateToken = async (req, res, next) => {
     const token = req.cookies.token;
     if (!token) {
-        return res.status(401).json({ error: 'No token provided' });
+        return next(httpError(401, 'No token provided'));
     }
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
+        // id is the primary key so findUnique can use it; deletedAt: null is an
+        // extra filter prisma applies on top, so a soft-deleted user is rejected.
         const userExists = await prisma.user.findUnique({
             where: { id: decoded.id, deletedAt: null },
             select: { id: true }
         });
 
         if (!userExists) {
-            return res.status(401).json({ error: 'User no longer exists' });
+            return next(httpError(401, 'User no longer exists'));
         }
 
         req.user = decoded;
         next();
     } catch (err) {
-        if (err.name === 'JsonWebTokenError') {
-            return res.status(401).json({ error: 'Invalid token' });
-        }
+        // jwt.verify throws these two for a bad/expired token, which is the
+        // client's problem -> 401. anything else is a real bug -> next(err).
         if (err.name === 'TokenExpiredError') {
-            return res.status(401).json({ error: 'Token expired' });
+            return next(httpError(401, 'Token expired'));
         }
-        console.error(err);
-        res.status(500).json({ error: 'Authentication error' });
+        if (err.name === 'JsonWebTokenError') {
+            return next(httpError(401, 'Invalid token'));
+        }
+        next(err);
     }
 };
-
