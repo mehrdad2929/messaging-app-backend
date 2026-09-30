@@ -27,26 +27,35 @@ model User {
     provider                  Provider?
     providerId                String?
     messages                  Message[]                 @relation("UserMessages")
+    messagesDeletedBy         Message[]                 @relation("messagesDeletedBy")
+    conversationDeletedBy     Conversation[]            @relation("conversationDeletedBy")
+    conversationsParticipated ConversationParticipant[] @relation("conversationParticipantDeletedBy")
     messagesRead              MessageRead[]
-    conversationsParticipated ConversationParticipant[]
     createdAt                 DateTime                  @default(now())
     updatedAt                 DateTime                  @updatedAt
     deletedAt                 DateTime?
-    dmsAsUserA                Dm[]                      @relation("userA")
-    dmsAsUserB                Dm[]                      @relation("userB")
+    conversationParticipants  ConversationParticipant[]
 
     @@unique([provider, providerId])
 }
 
+//thenredit last .sql for iff constraint on deletedBy and deletedAt
+//TODO:add message reply
 model Message {
     id             Int           @id @default(autoincrement())
     content        String
-    senderId       Int
-    sender         User          @relation("UserMessages", fields: [senderId], references: [id], onDelete: Cascade)
+    userId         Int
+    user           User          @relation("UserMessages", fields: [userId], references: [id], onDelete: Cascade)
     conversationId Int
     conversation   Conversation  @relation("ConversationMessage", fields: [conversationId], references: [id], onDelete: Cascade)
     createdAt      DateTime      @default(now())
     messageReads   MessageRead[]
+    deletedAt      DateTime?
+    deletedById    Int?
+    deletedBy      User?         @relation("messagesDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+    //@@unique constraint for faster quering the message table
+    @@index([conversationId, id])
 }
 
 model MessageRead {
@@ -62,22 +71,19 @@ model MessageRead {
 model Conversation {
     id                       Int                       @id @default(autoincrement())
     name                     String?
-    messagees                Message[]                 @relation("ConversationMessage")
+    messages                 Message[]                 @relation("ConversationMessage")
     conversationParticipants ConversationParticipant[]
-    dm                       Dm?
+    conversationType         ConversationType          @default(DM)
+    dmKey                    String?                   @unique
+    deletedAt                DateTime?
+    deletedBy                User?                     @relation("conversationDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+    deletedById              Int?
 }
 
-model Dm {
-    id             Int          @id @default(autoincrement())
-    name           String?
-    conversation   Conversation @relation(fields: [conversationId], references: [id])
-    conversationId Int          @unique
-    dmUserAId      Int
-    dmUserA        User         @relation("userA", fields: [dmUserAId], references: [id])
-    dmUserBId      Int
-    dmUserB        User         @relation("userB", fields: [dmUserBId], references: [id])
-
-    @@unique([dmUserAId, dmUserBId])
+enum ConversationType {
+    DM
+    GROUPCHAT
+    CHANNEL
 }
 
 enum Role {
@@ -94,6 +100,10 @@ model ConversationParticipant {
     conversationId Int
     role           Role         @default(MEMBER)
     joinedAt       DateTime     @default(now())
+    deletedAt      DateTime?
+
+    deletedById Int?
+    deletedBy   User? @relation("conversationParticipantDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
     @@unique([userId, conversationId])
 }
