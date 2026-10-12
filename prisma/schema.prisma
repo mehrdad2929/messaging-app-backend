@@ -31,12 +31,25 @@ model User {
     conversationDeletedBy     Conversation[]            @relation("conversationDeletedBy")
     conversationsParticipated ConversationParticipant[] @relation("conversationParticipantDeletedBy")
     messagesRead              MessageRead[]
+    emailVerified             DateTime?
+    codes                     VerificationCode[]        @relation("UserVerificationCode")
     createdAt                 DateTime                  @default(now())
     updatedAt                 DateTime                  @updatedAt
     deletedAt                 DateTime?
     conversationParticipants  ConversationParticipant[]
 
     @@unique([provider, providerId])
+}
+
+model VerificationCode {
+    id         Int       @id @default(autoincrement())
+    userId     Int
+    user       User      @relation("UserVerificationCode", fields: [userId], references: [id], onDelete: Cascade)
+    codeHash   String    @unique
+    expiresAt  DateTime
+    consumedAt DateTime?
+    attempts   Int       @default(0)
+    createdAt  DateTime  @default(now())
 }
 
 //thenredit last .sql for iff constraint on deletedBy and deletedAt
