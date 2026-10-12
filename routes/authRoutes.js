@@ -1,6 +1,13 @@
 const { Router } = require('express');
 const authController = require('../controllers/authController');
-const { loginValidation, validate, signupValidation, resetPasswordValidaiton, passwordSetForOAuthValidaiton } = require("../middlewares/validation");
+const {
+    verifyCodeValidation,
+    loginValidation,
+    validate,
+    signupValidation,
+    resetPasswordValidaiton,
+    passwordSetForOAuthValidaiton
+} = require("../middlewares/validation");
 const { authenticateToken } = require('../middlewares/auth');
 const { authLimiter, checkLimiter, readLimiter } = require('../middlewares/rateLimiter');
 const authRouter = Router();
@@ -17,6 +24,7 @@ authRouter.post('/auth/login',
     validate,
     authController.login
 );
+//TODO: add requireVerified to routes(the ones that needs it)
 authRouter.post('/auth/passwordSetForOAuth',
     checkLimiter,
     authenticateToken,
@@ -32,6 +40,19 @@ authRouter.post('/auth/passwordReset',
     authController.passwordReset
 );
 
+authRouter.post('/auth/request-code',
+    checkLimiter,
+    authenticateToken,
+    authController.requestCode
+);
+
+authRouter.post('/auth/verify-code',
+    checkLimiter,
+    authenticateToken,
+    verifyCodeValidation,
+    validate,
+    authController.verifyCode
+);
 authRouter.get('/auth/google', readLimiter, authController.googleAuth);
 authRouter.get('/auth/google/callback', authController.googleCallback);
 authRouter.get('/auth/github', readLimiter, authController.githubAuth);

@@ -1,6 +1,7 @@
 const prisma = require('../db/prisma');
 const { Role, ConversationType } = require('../generated/prisma')
 const { ok, created, httpError } = require('../utils/respond');
+const { issueCodeForUser } = require('../utils/verification');
 exports.health = async (req, res) => {
     const checks = {
         server: 'ok', // if we're executing this, Express is definitionally up
@@ -76,13 +77,31 @@ exports.updateUser = async (req, res, next) => {
     try {
         const { newUsername, newEmail, newDisplayName, newPicture } = req.body;
         const userId = req.user.id;
+        // We need the CURRENT email before overwriting it: if the address
+        // changes, the stored verification belongs to the OLD address and
+        // must die with it — otherwise verified status transfers to an
+        // address nobody proved ownership of.
+        const current = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { email: true }
+        });
+        if (!current) {
+            throw httpError(404, 'no such user');
+        }
+        // newEmail arrives already normalized (validation's customSanitizer
+        // lowercases/trims it into req.body), so a plain !== is a real
+        // compare, not a formatting accident.
+        const emailChanged = newEmail !== undefined && newEmail !== current.email;
         const newUser = await prisma.user.update({
             where: { id: userId },
             data: {
                 username: newUsername ?? undefined,
                 email: newEmail ?? undefined,
                 displayName: newDisplayName ?? undefined,
-                picture: newPicture ?? undefined
+                picture: newPicture ?? undefined,
+                // Clear + write in the SAME update: there is never a moment
+                // where the new address looks verified.
+                ...(emailChanged ? { emailVerified: null } : {})
             },
             select: {
                 id: true,
@@ -91,10 +110,38 @@ exports.updateUser = async (req, res, next) => {
                 displayName: true,
                 picture: true,
                 provider: true,
+                emailVerified: true,
                 createdAt: true,
             }
         });
-        return created(res, { user: newUser });
+        // New address -> new code, via the same helper the request-code route
+        // uses. It burns the old address's leftover codes too, so a code
+        // sitting in the OLD inbox can't verify the NEW address.
+        // Best-effort, same rule as signup: mail failure must not fail the
+        // update. verificationSent is only present when the email changed, so
+        // `false` always means "sending failed", never "nothing to send".
+        let verificationSent = false;
+        if (emailChanged) {
+            // The old address's live codes are dead the moment the email
+            // changes — and the cooldown inside issueCodeForUser measures
+            // "time since last SEND", which went to a DIFFERENT address.
+            // Burn them first so the new address (which has never received
+            // anything) isn't throttled by the old one's history. Without
+            // this, the main typo-fix flow (signup -> fix email seconds
+            // later) always eats a 429 and the user waits a minute staring
+            // at a verify screen. writeLimiter on this route stays as the
+            // anti-abuse backstop against email-toggle budget burning.
+            await prisma.verificationCode.deleteMany({
+                where: { userId, consumedAt: null },
+            });
+            try {
+                await issueCodeForUser(userId);
+                verificationSent = true;
+            } catch (mailError) {
+                console.error(`[otp] email-change code NOT sent for user ${userId}:`, mailError.message);
+            }
+        }
+        return ok(res, { user: newUser, ...(emailChanged ? { verificationSent } : {}) });
     } catch (error) {
         if (error.code === 'P2002') {
             const field = error.meta?.target?.[0];
@@ -109,15 +156,16 @@ exports.deleteUser = async (req, res, next) => {
             where: { id: req.user.id },
             data: {
                 deletedAt: new Date(),
+                //anonymyzing:
+                // username: `deleted_${req.user.id}`,
+                // email: null,
+                // displayName: null,
+                // picture: null,
+                // provider: null,
+                // providerId: null,
             },
             select: {
                 id: true,
-                username: true,
-                email: true,
-                displayName: true,
-                picture: true,
-                provider: true,
-                createdAt: true,
                 deletedAt: true
             }
         });
@@ -131,20 +179,15 @@ exports.deleteUser = async (req, res, next) => {
 const createDm = async ({ targetUserId, currentUserId }) => {
     const result = await prisma.$transaction(async (tx) => {
         const targetUser = await tx.user.findUnique({
-            where: { id: targetUserId }
+            where: { id: targetUserId, deletedAt: null }
         });
         if (!targetUser) {
             throw httpError(404, 'no such targetUser');
         }
-        const dmKey = [currentUserId, targetUserId].sort((a, b) => a - b).join('_');
-        const existingDm = await tx.conversation.findUnique({
-            where: {
-                dmKey: dmKey,
-            }
-        });
-        if (existingDm) {
-            throw httpError(409, 'this Dm already exist')
+        if (targetUserId == currentUserId) {
+            throw httpError(403, 'you can not have DM with yourself');
         }
+        const dmKey = [currentUserId, targetUserId].sort((a, b) => a - b).join('_');
         const conversation = await tx.conversation.create({
             data: {
                 conversationType: ConversationType.DM,
@@ -217,6 +260,9 @@ exports.createConversation = async (req, res, next) => {
         // the extra keys only exist for group creation, which is fine.
         return created(res, conversationCreationResult);
     } catch (error) {
+        if (error.code === 'P2002' && error.meta?.target?.[0] === 'dmKey') {
+            return next(httpError(409, 'this dm already exist'));
+        }
         next(error);
     }
 };
@@ -258,10 +304,15 @@ exports.deleteConversation = async (req, res, next) => {
         const result = await prisma.$transaction(async (tx) => {
 
             const conversation = await tx.conversation.findFirst({
-                where: { id: conversationId }
+                where: {
+                    id: conversationId,
+                }
             })
             if (!conversation || conversation.deletedAt) {
-                throw httpError(404, "no such conversation")
+                throw httpError(404, "no such GroupChat or Channel")
+            }
+            if (conversation.conversationType === ConversationType.DM) {
+                throw httpError(403, "You can not delete a DM")
             }
             const participant = await tx.conversationParticipant.findUnique({
                 where: {
@@ -297,7 +348,7 @@ exports.addConversationParticipant = async (req, res, next) => {
         const userId = req.user.id;
         const result = await prisma.$transaction(async (tx) => {
             const user = await tx.conversationParticipant.findUnique({
-                userId_conversationId: { userId, conversationId }
+                where: { userId_conversationId: { userId, conversationId } }
             })
             if (!user || user.deletedAt) {
                 throw httpError(404, "you are not a participant in this conversation");

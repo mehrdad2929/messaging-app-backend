@@ -40,6 +40,11 @@ H. [done]authController 401->409 for "already has a password" + "same password".
      correct: those are conflicts, not auth failures. see section 8.
 I. OPEN - messagesRead response is still large (3 arrays + userId). worth slimming
      to { userId, readMessageIds } once the frontend actually uses it.
+J. OPEN - no alerting on OTP mail failures. signup and email-change sends are
+     best-effort by design (a dead SMTP server must not fail account creation),
+     so a down mailer is visible ONLY as [otp] lines in the server logs.
+     production needs log monitoring/alerting on repeated "[otp] ... NOT sent"
+     lines, otherwise signups silently skip their codes and nobody gets paged.
 
 =========================================================================================================================
 8.RESPONSE FORMAT  (rewritten 2026-09-29 - simplified)
@@ -70,8 +75,15 @@ success responses (what the body looks like):
   messagesRead                       -> { userId, existingMessages,
                                           messagesReadBefore, messagesReadNow }
   health                             -> { status, checks, timestamp }   (200 AND 503)
-  signup / login                     -> { userId, authenticated: true }
-  checkAuth                          -> { authenticated, user }
+  signup                              -> { userId, authenticated: true, verificationSent }
+                                   (verificationSent: first OTP went out best-effort;
+                                    false = mailer failed, tap resend. login never sends.)
+  login                               -> { userId, authenticated: true, emailVerified }
+                                   (flag rides along so the banner shows without a
+                                    checkAuth round trip; DB stays source of truth)
+  updateUser                          -> { user } (+ verificationSent only when the
+                                         email changed: verified cleared, fresh code sent)
+  checkAuth                           -> { authenticated, user } (user carries emailVerified)
   logout / setPassword / resetPassword -> { message }
 
 error responses - ONE shape for every error in the app:
@@ -151,6 +163,7 @@ decisions made:
 7.16. createConversation happy paths: DM, GROUPCHAT, CHANNEL
 
 --- step 4: ci (do last, once step 3 is green locally) ---
+run npx prisma migrate in the ci so the migration exist in the ci
 7.17. .github/workflows/test.yml
 7.18. postgres:16 service container
 7.19. set DATABASE_URL and JWT_SECRET as real workflow env vars.
@@ -168,3 +181,5 @@ decisions made:
       ws migration.
 7.23. only then write ws tests (ws client + real server). nothing to test yet,
       so this is deferred not skipped.
+7.24. WebSockets:(email verification) if the app sends messages over Socket.IO, the socket's own auth needs
+      the same verified check. Gating the HTTP routes doesn't cover it.

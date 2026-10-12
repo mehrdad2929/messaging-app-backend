@@ -1,4 +1,3 @@
-require('@dotenvx/dotenvx').config();
 const express = require('express');
 const appRouter = require('./routes/appRoutes');
 const prisma = require('./db/prisma');
@@ -12,6 +11,7 @@ const { globalLimiter } = require('./middlewares/rateLimiter');
 const { httpError } = require('./utils/respond');
 const allowedOrigins = [
     'http://localhost:5173',
+    process.env.FRONTEND_URL
     //messagign app frontend deployment url
 ];
 //if behind a proxy

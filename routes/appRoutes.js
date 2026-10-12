@@ -1,7 +1,9 @@
+//NOTE:always set up a test(postman,httpie,curl , integeration test ,console log etc(anything basicly))
+//environment then write the code
 const { Router } = require('express');
 const appController = require('../controllers/appController');
 const authRouter = require('./authRoutes.js');
-const { authenticateToken } = require('../middlewares/auth');
+const { authenticateToken, requireVerified } = require('../middlewares/auth');
 const { readLimiter, writeLimiter, conversationLimiter, messageLimiter } = require('../middlewares/rateLimiter');
 const {
     addConversationParticipantValidation,
@@ -20,6 +22,15 @@ const {
 } = require('../middlewares/validation');
 const appRouter = Router();
 
+// VERIFICATION POLICY (Option B): login stays open; everything that touches
+// other users' data or content requires requireVerified AFTER authenticateToken
+// (order matters: requireVerified reads req.user, which only authenticateToken
+// sets). Deliberately OPEN: health, signup/login/logout/checkAuth (the frontend
+// needs checkAuth while unverified — it's how the banner learns the flag
+// flipped), request-code/verify-code (the path TO verified), password
+// set/reset, updateUser (a typo'd email must stay fixable or the user is
+// locked out forever), deleteUser (blocking self-deletion for unverified is
+// hostile), OAuth start/callback.
 appRouter.use('/', authRouter);
 appRouter.get('/api/health',
     appController.health
@@ -28,12 +39,14 @@ appRouter.get('/api/health',
 appRouter.get('/api/profile/:targetUserId',
     readLimiter,
     authenticateToken,
+    requireVerified,
     appController.getProfile
 );
 //jwt user routes
 appRouter.get('/api/user',
     readLimiter,
     authenticateToken,
+    requireVerified,
     appController.getUser
 );
 appRouter.post('/api/user',
@@ -65,6 +78,7 @@ appRouter.delete('/api/user',
 appRouter.post('/api/conversations',
     conversationLimiter,
     authenticateToken,
+    requireVerified,
     createConversationValidation,
     validate,
     appController.createConversation
@@ -74,6 +88,7 @@ appRouter.post('/api/conversations',
 appRouter.get('/api/conversations',
     readLimiter,
     authenticateToken,
+    requireVerified,
     getUsersConversationsValidation,
     validate,
     appController.getUsersConversations
@@ -82,6 +97,7 @@ appRouter.get('/api/conversations',
 appRouter.delete('/api/conversations/:conversationId',
     conversationLimiter,
     authenticateToken,
+    requireVerified,
     deleteConversationValidation,
     validate,
     appController.deleteConversation
@@ -90,6 +106,7 @@ appRouter.delete('/api/conversations/:conversationId',
 appRouter.post('/api/conversations/:conversationId/participants/:targetUserId',
     writeLimiter,
     authenticateToken,
+    requireVerified,
     addConversationParticipantValidation,
     validate,
     appController.addConversationParticipant
@@ -98,6 +115,7 @@ appRouter.post('/api/conversations/:conversationId/participants/:targetUserId',
 appRouter.delete('/api/conversations/:conversationId/participants/:targetUserId',
     writeLimiter,
     authenticateToken,
+    requireVerified,
     deleteConversationParticipantValidation,
     validate,
     appController.deleteConversationParticipant
@@ -105,6 +123,7 @@ appRouter.delete('/api/conversations/:conversationId/participants/:targetUserId'
 appRouter.post('/api/conversations/:conversationId/participants/:targetUserId/promote',
     writeLimiter,
     authenticateToken,
+    requireVerified,
     promoteConversationParticipantValidation,
     validate,
     appController.promoteConversationParticipant
@@ -112,6 +131,7 @@ appRouter.post('/api/conversations/:conversationId/participants/:targetUserId/pr
 appRouter.post('/api/conversations/:conversationId/participants/:targetUserId/demote',
     writeLimiter,
     authenticateToken,
+    requireVerified,
     demoteConversationParticipantValidation,
     validate,
     appController.demoteConversationParticipant
@@ -120,14 +140,16 @@ appRouter.post('/api/conversations/:conversationId/participants/:targetUserId/de
 appRouter.post('/api/conversations/:conversationId/messages',
     messageLimiter,
     authenticateToken,
+    requireVerified,
     createMessageValidation,
     validate,
     appController.createMessage
 );
 //deleting a message in a conversation
-appRouter.delete('/api/conversations/:conversationId/messages',
+appRouter.post('/api/conversations/:conversationId/messages/delete',
     messageLimiter,
     authenticateToken,
+    requireVerified,
     deleteMessageValidation,
     validate,
     appController.deleteMessage
@@ -137,6 +159,7 @@ appRouter.delete('/api/conversations/:conversationId/messages',
 appRouter.get('/api/conversations/:conversationId/messages',
     readLimiter,
     authenticateToken,
+    requireVerified,
     getConversationMessagesValidation,
     validate,
     appController.getConversationMessages
@@ -146,6 +169,7 @@ appRouter.get('/api/conversations/:conversationId/messages',
 appRouter.post('/api/conversations/:conversationId/messages/read',
     writeLimiter,
     authenticateToken,
+    requireVerified,
     messagesReadValidation,
     validate,
     appController.messagesRead

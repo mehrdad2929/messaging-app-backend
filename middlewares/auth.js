@@ -1,8 +1,4 @@
-const cookieParser = require('cookie-parser');
 const prisma = require('../db/prisma');
-if (process.env.NODE_ENV !== 'production') {
-    require('@dotenvx/dotenvx').config();
-}
 const jwt = require('jsonwebtoken');
 const { httpError } = require('../utils/respond');
 
@@ -16,16 +12,16 @@ exports.authenticateToken = async (req, res, next) => {
 
         // id is the primary key so findUnique can use it; deletedAt: null is an
         // extra filter prisma applies on top, so a soft-deleted user is rejected.
-        const userExists = await prisma.user.findUnique({
+        const dbUser = await prisma.user.findUnique({
             where: { id: decoded.id, deletedAt: null },
-            select: { id: true }
+            select: { id: true, emailVerified: true }
         });
 
-        if (!userExists) {
+        if (!dbUser) {
             return next(httpError(401, 'User no longer exists'));
         }
 
-        req.user = decoded;
+        req.user = { ...decoded, emailVerified: dbUser.emailVerified !== null };
         next();
     } catch (err) {
         // jwt.verify throws these two for a bad/expired token, which is the
@@ -38,4 +34,11 @@ exports.authenticateToken = async (req, res, next) => {
         }
         next(err);
     }
+};
+
+exports.requireVerified = (req, res, next) => {
+    if (!req.user?.emailVerified) {
+        return next(httpError(403, 'Please verify your email first'));
+    }
+    next();
 };
