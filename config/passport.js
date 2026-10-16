@@ -258,7 +258,6 @@ passport.use(
     )
 );
 module.exports = passport;
-module.exports.initialized = true;
 // Exported so tests can call the decision logic with fake profiles instead
 // of going through Google/GitHub, e.g.
 //   findOrCreateOAuthUser({ provider: 'GOOGLE', providerId: 'x', ... })

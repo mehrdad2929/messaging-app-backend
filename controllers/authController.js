@@ -11,12 +11,6 @@ const FRONTEND_URL = process.env.FRONTEND_URL;
 // comment at the top of that file for why it isn't defined here.
 const { issueCodeForUser, MAX_ATTEMPTS } = require('../utils/verification');
 
-const initPassport = () => {
-    if (!require('../config/passport').initialized) {
-        require('../config/passport');
-    }
-};
-
 exports.signup = async (req, res, next) => {
     try {
         const { username, email, displayName, password } = req.body;
@@ -276,17 +270,24 @@ exports.logout = (req, res, next) => {
 }
 
 exports.googleAuth = (req, res, next) => {
-    initPassport();
     const passport = require('passport');
     passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
 };
 
 exports.googleCallback = (req, res, next) => {
-    initPassport();
     const passport = require('passport');
-    passport.authenticate('google', { session: false }, (err, user) => {
+    // passport's custom callback is (err, user, info). our strategies REFUSE a
+    // login with done(null, false, { message: reason }), and passport delivers
+    // that reason in `info` - NOT in `err`. `err` is only set for a real crash
+    // (the strategy's catch calls done(error, null)).
+    passport.authenticate('google', { session: false }, (err, user, info) => {
         if (err || !user) {
-            return res.redirect(`${FRONTEND_URL}?error=oauth_failed`);
+            // a real bug: log it, but don't hand it to the browser - same masking
+            // rule the global error handler uses for unexpected errors.
+            if (err) console.error('[oauth:google] error', err);
+            // encodeURIComponent: reasons contain spaces/commas ("use that login").
+            const reason = info?.message || 'oauth_failed';
+            return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent(reason)}`);
         }
         const token = jwt.sign(
             { id: user.id, username: user.username },
@@ -304,18 +305,19 @@ exports.googleCallback = (req, res, next) => {
 };
 
 exports.githubAuth = (req, res, next) => {
-    initPassport();
     const passport = require('passport');
     passport.authenticate('github', { scope: ['user:email'] })(req, res, next);
 };
 
 exports.githubCallback = (req, res, next) => {
-    initPassport();
     const passport = require('passport');
     //session false means we don't use session(hence serialize deserialize is not used (redundant))
-    passport.authenticate('github', { session: false }, (err, user) => {
+    //NOTE: third arg `info` carries the refusal reason - same as googleCallback above.
+    passport.authenticate('github', { session: false }, (err, user, info) => {
         if (err || !user) {
-            return res.redirect(`${FRONTEND_URL}?error=oauth_failed`);
+            if (err) console.error('[oauth:github] error', err);
+            const reason = info?.message || 'oauth_failed';
+            return res.redirect(`${FRONTEND_URL}?error=${encodeURIComponent(reason)}`);
         }
         const token = jwt.sign(
             { id: user.id, username: user.username },

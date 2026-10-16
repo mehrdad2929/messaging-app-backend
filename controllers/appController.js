@@ -779,9 +779,7 @@ exports.messagesRead = async (req, res, next) => {
         });
         return created(res, {
             userId,
-            existingMessages: result.existingMessages,
-            messagesReadBefore: result.messagesReadBefore,
-            messagesReadNow: result.messagesReadNow
+            readMessageIds: result.messagesReadNow.map((msgObj) => msgObj.messageId)
         })
     } catch (error) {
         next(error)

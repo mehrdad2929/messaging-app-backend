@@ -13,7 +13,7 @@ const allowedOrigins = [
     'http://localhost:5173',
     process.env.FRONTEND_URL
     //messagign app frontend deployment url
-];
+].filter(Boolean);
 //if behind a proxy
 //app.set('trust proxy', 1)
 //for now gonna use moragan
