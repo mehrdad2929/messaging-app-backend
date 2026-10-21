@@ -10,6 +10,9 @@ const FRONTEND_URL = process.env.FRONTEND_URL;
 // utils/verification.js, shared with updateUser in appController — see the
 // comment at the top of that file for why it isn't defined here.
 const { issueCodeForUser, MAX_ATTEMPTS } = require('../utils/verification');
+// Account deletion grace window (todo.md O): a tombstone inside the window is
+// restorable by logging in; one past it is anonymized so its name/email free up.
+const { graceExpired, anonymizeUser } = require('../utils/accountLifecycle');
 
 exports.signup = async (req, res, next) => {
     try {
@@ -18,13 +21,27 @@ exports.signup = async (req, res, next) => {
             where: { username }
         });
         if (existingUsername) {
-            throw httpError(409, "User with this username already exists");
+            // A tombstone STILL INSIDE its grace window keeps the username
+            // reserved on purpose (that is what makes deletion undoable by
+            // logging in). One PAST the window is anonymized right here,
+            // lazily, so the name frees up even before the daily sweep - the
+            // INSERT below would otherwise fail on the unique constraint.
+            if (graceExpired(existingUsername)) {
+                await anonymizeUser(existingUsername);
+            } else {
+                throw httpError(409, "User with this username already exists");
+            }
         }
         const existingEmail = await prisma.user.findUnique({
             where: { email: email }
         });
         if (existingEmail) {
-            throw httpError(409, "User with this email already exists");
+            // Same rule for the email: reserved during the window, freed after.
+            if (graceExpired(existingEmail)) {
+                await anonymizeUser(existingEmail);
+            } else {
+                throw httpError(409, "User with this email already exists");
+            }
         }
         const hashedPassword = await bcrypt.hash(password, 10);
         const user = await prisma.user.create({
@@ -82,8 +99,25 @@ exports.login = async (req, res, next) => {
         const user = await prisma.user.findUnique({
             where: { username }
         });
-        if (!user || user.deletedAt || user.password == null || !(await bcrypt.compare(password, user.password))) {
+        // Verify the password FIRST, before looking at deletedAt at all: if we
+        // restored first, a WRONG password would cancel a pending deletion.
+        if (!user || user.password == null || !(await bcrypt.compare(password, user.password))) {
             throw httpError(401, 'Invalid credentials');
+        }
+        // C-lite (todo.md O): a tombstone inside its grace window is restored
+        // by a successful login - logging in IS the ownership proof, so there
+        // is no separate reactivate route and no OTP. One past the window
+        // stays a plain 401 (no write on auth failure); the daily sweep, or
+        // the next signup/OAuth touch, anonymizes it.
+        const reactivated = user.deletedAt !== null;
+        if (reactivated) {
+            if (graceExpired(user)) {
+                throw httpError(401, 'Invalid credentials');
+            }
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { deletedAt: null },
+            });
         }
         const token = jwt.sign(
             { id: user.id, username: user.username },
@@ -101,7 +135,13 @@ exports.login = async (req, res, next) => {
         // is already in hand (fetched above for the password check), so this
         // costs no extra query. Source of truth stays the DB per request —
         // this flag is a convenience copy, not a second source.
-        return ok(res, { userId: user.id, authenticated: true, emailVerified: user.emailVerified !== null });
+        return ok(res, {
+            userId: user.id,
+            authenticated: true,
+            emailVerified: user.emailVerified !== null,
+            // lets the frontend show "welcome back - deletion cancelled"
+            ...(reactivated ? { reactivated: true } : {}),
+        });
     } catch (error) {
         next(error);
     }

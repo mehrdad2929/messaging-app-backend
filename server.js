@@ -7,6 +7,23 @@ require('@dotenvx/dotenvx').config();
 // passport-oauth2 throws "requires a clientID option" if it is undefined.
 require('./config/passport');
 const app = require('./app');
+const { anonymizeExpiredUsers } = require('./utils/accountLifecycle');
+
+// Daily tombstone sweep (todo.md item O). Expiry ALSO happens lazily, wherever
+// a tombstone blocks something (signup / OAuth), so correctness never depends
+// on this running. This sweep is what expires tombstones nothing ever touches.
+// Best-effort on purpose: a failed run is logged and the server keeps serving.
+function sweepTombstones() {
+    anonymizeExpiredUsers()
+        .then((count) => {
+            if (count > 0) console.log(`[lifecycle] anonymized ${count} expired account(s)`);
+        })
+        .catch((err) => console.error('[lifecycle] sweep failed', err));
+}
+setTimeout(sweepTombstones, 60 * 1000).unref();      // once shortly after boot
+setInterval(sweepTombstones, 24 * 60 * 60 * 1000)    // then daily
+    .unref();                                        // never keeps the process alive
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, (error) => {
     if (error) {

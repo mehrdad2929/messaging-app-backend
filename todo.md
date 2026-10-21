@@ -19,15 +19,41 @@ for new techs  understand what ur working with and ask ai to be more
 ===============================================================
 DECISIONS & STANDING NOTES
 ===============================================================
-O. deleted accounts hold uniques forever (deleteUser anonymization still
-   commented out). consistent with the OAuth deleted-row behavior, but arrived
-   at by accident, never chosen. pick a policy: free the name/email or not.
+O. [decided: C-lite grace window - built] deleteUser only sets deletedAt; the
+   row keeps its unique values (username, email, provider+providerId) for a
+   14-day grace window (GRACE_DAYS lives in utils/accountLifecycle.js, in CODE
+   not .env: it is policy, not a secret). During the window the account is
+   frozen - middlewares/auth.js already 401s any deletedAt user, so no
+   per-route blocking is needed. Logging in IS the restore: a successful
+   password login (password checked BEFORE any restore, so a wrong password
+   can never cancel a deletion) or an OAuth provider+providerId match clears
+   deletedAt. No public reactivate route and no restore OTP - the login
+   itself proves ownership, and it is the only place ownership can be proven
+   without reopening the enumeration/budget questions C1 closed. No new
+   column: the window is derived from deletedAt + GRACE_DAYS, one source of
+   truth. The @unique in the DB is still the real wall; anonymization is what
+   lifts it.
+   Expiry: past the window the row is anonymized (username ->
+   deleted_<id>_<rand3hex>, email -> null, displayName -> 'Deleted User',
+   picture/provider/providerId -> null, password untouched, id PRESERVED so
+   Message/MessageRead/participant FKs keep working and history survives).
+   Expiry happens LAZILY wherever a tombstone blocks something (signup 409
+   check, OAuth identity/email refusals) plus a daily sweep in server.js so
+   untouched rows expire too. Login deliberately does NOT lazily anonymize an
+   expired tombstone: it returns a plain 401 with no write. An expired OAuth
+   identity is REFUSED ("sign up again"), never silently turned into a fresh
+   empty account - login intent is not signup intent.
 F. [wontfix-for-now] app.set('trust proxy', 1) stays commented out.
    trigger: the day this deploys behind a proxy, enable it or the rate
-   limiter sees one shared IP for all users.
+   limiter sees one shared IP for all users. it also governs req.ip/req.protocol,
+   so logs show the proxy IP too. use 1 (trust exactly one hop), NOT true: true
+   trusts the whole X-Forwarded-For chain, letting clients spoof their IP and
+   dodge the limiter.
 P. [decided, not a task] GitHub never auto-links (basic profile asserts no
    verified email, so the link branch can't trust it). listed so it reads
-   as a decision, not a bug. relax by fetching user:email flags.
+   as a decision, not a bug. relax by fetching the /user/emails API inside the
+   strategy verify callback (needs user:email scope) and passing its verified
+   flag.
 
 ===============================================================
 FUTURE WORKFLOWS (features, design before building)
@@ -138,6 +164,13 @@ run npx prisma migrate in the ci so the migration exist in the ci
       the same verified check. Gating the HTTP routes doesn't cover it.
       concretely: the Socket.IO handshake must run requireVerified logic,
       not just JWT verification.
+7.26. [open] deletion grace window (C-lite, utils/accountLifecycle.js):
+      deleteUser returns restorableUntil/graceDays; login inside the window
+      clears deletedAt and returns reactivated:true; expired tombstone ->
+      login 401 with NO write; signup on an expired tombstone's username or
+      email anonymizes it and succeeds (in-window -> 409); expired OAuth
+      identity -> refused ("sign up again"), not auto-created; anonymize
+      keeps id (threads intact) and frees username/email/provider+providerId.
 
 =========================================================================================================================
 8.RESPONSE CONTRACT (what the frontend branches on)

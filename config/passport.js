@@ -3,6 +3,9 @@ const { Provider } = require('../generated/prisma')
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const GitHubStrategy = require('passport-github2').Strategy;
 const prisma = require('../db/prisma');
+// Grace-window helpers (todo.md O): in-window tombstones are restorable,
+// expired ones are not.
+const { graceExpired } = require('../utils/accountLifecycle');
 
 // NOTE: this file used to hold two separate copies of the login logic (one
 // per provider) that drifted apart, plus a blanket "reject anyone whose
@@ -125,7 +128,23 @@ async function findOrCreateOAuthUser({ provider, providerId, email, emailVerifie
         where: { provider, providerId, deletedAt: { not: null } }
     });
     if (deletedIdentity) {
-        return { ok: false, reason: 'this account was deleted. contact support to restore it' };
+        // C-lite (todo.md O): inside the grace window, matching provider+id IS
+        // the ownership proof (only the owner's Google/GitHub account can
+        // produce it), so logging back in restores the account.
+        if (!graceExpired(deletedIdentity)) {
+            return {
+                ok: true,
+                user: await prisma.user.update({
+                    where: { id: deletedIdentity.id },
+                    data: { deletedAt: null },
+                })
+            };
+        }
+        // Past the window we REFUSE rather than quietly creating a fresh empty
+        // account: "log in" intent is not "sign up" intent. The sweep (or a
+        // later signup touching this identity) anonymizes the row, which is
+        // what frees the values up.
+        return { ok: false, reason: 'this account can no longer be restored. sign up again' };
     }
 
     // ----- CASE 2: new login, provider gave no email -----
@@ -180,7 +199,16 @@ async function findOrCreateOAuthUser({ provider, providerId, email, emailVerifie
     // consistent, not a new rule.
     const deletedEmail = await prisma.user.findFirst({ where: { email } });
     if (deletedEmail) {
-        return { ok: false, reason: 'this email belongs to a deleted account. contact support to restore it' };
+        // The email is held by a tombstone. Inside the window the owner can
+        // still come back (password login restores it; this OAuth identity is
+        // not the one on the row, so we cannot prove ownership here). Past it,
+        // the window is over and a fresh signup may reuse the email.
+        return {
+            ok: false,
+            reason: graceExpired(deletedEmail)
+                ? 'this email belongs to a deleted account. sign up again'
+                : 'this email belongs to an account pending deletion. log in to restore it'
+        };
     }
 
     // ----- CASE 3: genuinely new email -> create -----

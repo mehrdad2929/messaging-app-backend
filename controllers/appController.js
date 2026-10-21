@@ -2,6 +2,9 @@ const prisma = require('../db/prisma');
 const { Role, ConversationType } = require('../generated/prisma')
 const { ok, created, httpError } = require('../utils/respond');
 const { issueCodeForUser } = require('../utils/verification');
+// Deletion grace window (todo.md O): deleteUser starts it, the sweep/lazy
+// checks end it.
+const { GRACE_DAYS, graceEndedAt } = require('../utils/accountLifecycle');
 exports.health = async (req, res) => {
     const checks = {
         server: 'ok', // if we're executing this, Express is definitionally up
@@ -152,25 +155,28 @@ exports.updateUser = async (req, res, next) => {
 };
 exports.deleteUser = async (req, res, next) => {
     try {
+        // Deletion opens a GRACE WINDOW (utils/accountLifecycle.js): the row
+        // keeps username/email/picture/provider for GRACE_DAYS so a fresh
+        // login (password or OAuth identity match) restores the account by
+        // clearing deletedAt. Anonymization is NOT done here - it happens when
+        // the window ends (lazy touches + the daily sweep). The old commented
+        // block would have written displayName: null, violating the NOT NULL
+        // constraint, and was never enabled anyway.
         const user = await prisma.user.update({
             where: { id: req.user.id },
-            data: {
-                deletedAt: new Date(),
-                //anonymyzing:
-                // username: `deleted_${req.user.id}`,
-                // email: null,
-                // displayName: null,
-                // picture: null,
-                // provider: null,
-                // providerId: null,
-            },
+            data: { deletedAt: new Date() },
             select: {
                 id: true,
                 deletedAt: true
             }
         });
         res.clearCookie('token');
-        return ok(res, { user });
+        return ok(res, {
+            user,
+            // so the frontend can say "log in before <date> to cancel deletion"
+            restorableUntil: graceEndedAt(user.deletedAt),
+            graceDays: GRACE_DAYS,
+        });
     } catch (error) {
         next(error);
     }
