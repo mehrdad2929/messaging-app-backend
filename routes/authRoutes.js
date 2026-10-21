@@ -24,7 +24,12 @@ authRouter.post('/auth/login',
     validate,
     authController.login
 );
-//TODO: add requireVerified to routes(the ones that needs it)
+// passwordSetForOAuth / passwordReset stay OPEN (no requireVerified) on
+// purpose: they touch only the caller's own credential, and reset already
+// requires the current password, which is a stronger ownership proof than a
+// verified email. Gating them would also lock out users whose email is
+// unverified or missing (an OAuth row with no email can never receive a code).
+// See the VERIFICATION POLICY block at the top of routes/appRoutes.js.
 authRouter.post('/auth/passwordSetForOAuth',
     checkLimiter,
     authenticateToken,

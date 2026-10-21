@@ -69,6 +69,13 @@ J. no alerting on OTP mail failures. signup and email-change sends are
    lines, otherwise signups silently skip their codes and nobody gets paged.
 Q. [research] use sentry middleware (how can i use it in this project and in
    general what does it offer)
+R. [security, design first] changing/resetting a password does NOT invalidate
+   existing JWTs, so a stolen token keeps working for up to 7 days after the
+   owner rotates the password. requireVerified does not help here (and is not
+   the right gate for the password routes - see the note in routes/authRoutes.js).
+   fix: add tokenVersion (or passwordChangedAt) to User, bump it on password
+   change/reset, and in authenticateToken reject tokens whose iat predates it.
+   needs one column + migration, and logout-everywhere can reuse the same bump.
 
 ===============================================================
 7.TESTING ROADMAP (detail for step 3 above)
