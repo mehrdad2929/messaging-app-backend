@@ -5,6 +5,12 @@ const makeLimiter = (windowMinutes, max, message = 'too many attempts, please tr
     legacyHeaders: false,
     windowMs: windowMinutes * 60 * 1000,
     max,
+    // Tests exercise the whole suite from one IP and the store is in-memory
+    // with counters that never reset between tests, so without this the 30/min
+    // writeLimiter would turn later tests into 429s for no visible reason.
+    // The skip is read per request, so it only fires when NODE_ENV=test
+    // (set in .env.test) - production behavior is untouched.
+    skip: () => process.env.NODE_ENV === 'test',
     // NOTE: express-rate-limit sends this body itself and never goes through
     // app.js's error handler, so it can't use utils/respond.js. That means
     // { error: message } here is a hand-written copy of the shape that

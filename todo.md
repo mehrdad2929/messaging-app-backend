@@ -89,21 +89,45 @@ decisions made:
   - runner: node:test (built in) + supertest. zero config, works with commonjs.
     alt: vitest if i want watch mode + nicer diffs.
   - rate limiters MUST be skipped in tests or the suite throttles itself into 429s.
+  - isolation plan (decided 2026-10-23): ONE shared test DB + TRUNCATE ...
+    RESTART IDENTITY CASCADE in beforeEach + --test-concurrency=1. do NOT wrap
+    tests in prisma transactions: the app queries through a different pooled
+    connection, so it cannot see uncommitted fixtures (READ COMMITTED), and
+    supertest's real HTTP socket stops AsyncLocalStorage/context from reaching
+    the express handler. making it work needs a global override in db/prisma.js
+    or a req.db/services refactor.
+    scale trigger: if the suite gets slow (roughly 30-60s) or grows past ~10
+    files, switch to one database (or schema) per test FILE - each file is its
+    own process, so it can set DATABASE_URL before requiring app, and the schema
+    can be cloned from a migrated template DB (CREATE DATABASE x TEMPLATE ...).
+    full analysis: project-based-notes/"project based knowledg"/
+                  Integration testing — DB isolation options.md
 
 --- step 1: prerequisites (do before writing a single test) ---
 7.1. [done] @@index([conversationId, id]) on Message (migrated 2026-09-28).
      lesson kept: @@index is NOT @@unique — a lookup structure, not a
      constraint; never valid in a findUnique where. planner picks it up
      from the WHERE/ORDER BY shape on its own (proven via EXPLAIN).
-7.2. [open] create separate test database: messaging_app_db_test
-7.3. [open] add .env.test to .gitignore (keep .env.example as the template)
-7.4. [open] add skip to the makeLimiter factory in middlewares/rateLimiter.js:
-         skip: () => process.env.NODE_ENV === 'test'
+7.2. [done] messaging_app_db_test created 2026-10-22; `prisma migrate deploy`
+     applied all 18 migrations. deploy (not db push) so the test DB matches
+     the committed migration history, which is also what CI will do (7.21).
+7.3. [done] already covered, no change needed: .gitignore has ".env.*" plus
+     "!.env.example", so .env.test is ignored but the template stays tracked.
+7.4. [done] skip: () => process.env.NODE_ENV === 'test' added to makeLimiter,
+     so every limiter inherits it. skip is read per REQUEST, so it only fires
+     when .env.test set NODE_ENV=test; production limits are untouched.
      (store is in-memory + keyed by ip, so a suite creating 40 messages
       hits the 30/min messageLimiter and later tests get 429. counter never
       resets between tests -> flaky)
-7.5. [open] replace the placeholder test script in package.json:
-         "test": "node --test --env-file=.env.test tests/**/*.test.js"
+7.5. [done] "test": "node --test --env-file=.env.test --test-concurrency=1 tests/"
+     plus supertest added as a devDependency. two deliberate changes vs the
+     draft above:
+       - "tests/" instead of "tests/**/*.test.js": npm runs scripts under sh,
+         where ** is not recursive (it would look for tests/<dir>/<file>).
+       - --test-concurrency=1: node runs test FILES in parallel by default,
+         so two files would truncate one shared test DB under each other.
+     .env.test is the single loader (server.js's dotenvx never runs in tests),
+     and it points at messaging_app_db_test.
 7.6. [done] 404 handler returns JSON like every other error
 
 --- step 2: test harness (one time, reused by everything) ---
