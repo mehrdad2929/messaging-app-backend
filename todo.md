@@ -172,7 +172,24 @@ decisions made:
 
 --- step 3: test cases, in priority order ---
 (line refs predate rewrites; correct them when the tests land, not before)
-7.10. [open] auth: no cookie -> 401; soft-deleted user -> 401 (middlewares/auth.js:16)
+7.10. [done] auth gate: tests/auth.test.js, target GET /auth/check (has
+      authenticateToken but not requireVerified, so every failure is the
+      middleware's own). 8 cases, one per branch in middlewares/auth.js:
+      live token -> 200; no cookie -> 401 "No token provided"; garbage token,
+      wrong-secret token -> 401 "Invalid token"; past exp -> 401 "Token
+      expired"; hard-deleted user id, soft-deleted user (in window), and
+      past-grace tombstone -> 401 "User no longer exists".
+      lessons locked in:
+        - a valid JWT is not enough: authenticateToken re-reads the user with
+          `deletedAt: null`, so a token issued BEFORE deletion stops working
+          immediately. deleted tests MUST use cookieFor(), never loginAs() -
+          login restores an in-window account and would undo the fixture.
+        - past-grace returns the same 401 as in-window: restoring is login's
+          job and only inside the window; the token never reopens an account.
+        - failed auth performs no writes (assert deletedAt/username/displayName
+          unchanged), so a 401 can't half-anonymize a tombstone.
+      exact error strings are asserted on purpose: status is always 401, so
+      the message is the only observable difference between branches.
 7.11. [open] deleteMessage role matrix (appController.js:499-507)
       3 requester roles x 3 author roles, table driven. highest value test.
 7.12. [open] pagination cursor math (appController.js:575-577)
