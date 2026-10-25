@@ -131,7 +131,7 @@ decisions made:
 7.6. [done] 404 handler returns JSON like every other error
 
 --- step 2: test harness (one time, reused by everything) ---
-7.7. [open] tests/helpers/db.js - truncate between tests:
+7.7. [done] tests/helpers/db.js - resetDb(), used as beforeEach(resetDb):
          TRUNCATE TABLE "MessageRead", "Message", "ConversationParticipant",
                         "Conversation", "VerificationCode", "User"
                         RESTART IDENTITY CASCADE;
@@ -141,11 +141,34 @@ decisions made:
      cooldowns into the next test (request-code would 429 for no visible
      reason). OTP tests should also delete a user's codes directly when they
      need a fresh code without waiting out the cooldown.
-7.8. [open] tests/helpers/factories.js - createUser(), createConversation(),
-     loginAs(user) -> cookie header, addParticipant(conv, user, role)
-     without these every test is 30 lines of prisma boilerplate
-7.9. [open] skip oauth routes in tests (/auth/google, /auth/github) - they need real
-     client ids and make live network calls
+     $executeRawUnsafe is required (TRUNCATE takes no bind parameters); the
+     table list is a hard-coded literal, so there is no injection surface.
+     tests/harness.test.js proves an id restarts at 1 after a reset.
+7.8. [done] tests/helpers/factories.js - createUser(), createConversation(),
+     createDm(), addParticipant(conv, user, role), createMessage(),
+     loginAs(user) -> "token=..." cookie, cookieFor(user) -> jwt signed
+     directly. without these every test is 30 lines of prisma boilerplate.
+     decisions:
+       - factories write to the DB directly (arrange), tests call the API
+         (act) and assert response + DB. a factory must never replace the
+         endpoint under test.
+       - loginAs is the exception: it uses the real POST /auth/login so the
+         cookie (bcrypt, payload, flags) is genuine. it throws on non-200 so
+         the failure points at login, not at a later 401.
+       - cookieFor exists only for cases where login is blocked on purpose
+         (deleted / expired grace user). authenticateToken still re-reads the
+         user from the DB, so the middleware is genuinely exercised.
+       - default password secret123, hashed ONCE at module load; custom
+         passwords are hashed on demand and `password: null` means OAuth-only.
+       - usernames/emails get a random suffix even though resetDb already
+         cleans up: readable failures, and a forgotten cleanup cannot collide.
+7.9. [done] oauth boundary: /auth/google and /auth/github are NEVER called by
+     the suite (live redirect + real client ids). .env.test carries dummy
+     client ids only so requiring config/passport.js registers the strategies
+     without throwing. the decision logic is tested by calling
+     findOrCreateOAuthUser(profile) directly with fake profiles.
+     STILL OPEN: that decision table (in-window restore / expired refusal /
+     email collision / new user) has not been written yet - add it in step 3.
 
 --- step 3: test cases, in priority order ---
 (line refs predate rewrites; correct them when the tests land, not before)
