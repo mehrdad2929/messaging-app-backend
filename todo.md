@@ -190,8 +190,37 @@ decisions made:
           unchanged), so a 401 can't half-anonymize a tombstone.
       exact error strings are asserted on purpose: status is always 401, so
       the message is the only observable difference between branches.
-7.11. [open] deleteMessage role matrix (appController.js:499-507)
-      3 requester roles x 3 author roles, table driven. highest value test.
+7.11. [done] deleteMessage role matrix: tests/deleteMessage.test.js, 8 tests.
+      rule (appController.deleteMessage):
+        OWNER  -> any message in the conversation
+        ADMIN  -> own message, or an author whose role is MEMBER
+        MEMBER -> own message only
+      so ADMIN cannot touch another ADMIN's or the OWNER's message; the
+      diagonal (requester is the author) is allowed for every role because
+      "own message" is a separate branch, not a row of the matrix.
+      coverage: 3 matrix tests (one request per requester role, 3 messages -
+      one author per role) + 3 own-message tests + non-participant 403 +
+      re-delete is a no-op. every success asserts the response arrays AND the
+      row (deletedAt set, deletedById = requester); denial asserts deletedAt
+      stays null.
+      contract decisions (controller changed 2026-10-26):
+        - per-message denial is NOT 403. batch endpoint -> 200 with
+          deletedIds / forbiddenIds / missingIds. 403 stays reserved for
+          "not a participant" (or soft-deleted participant row); 404 for a
+          missing/deleted conversation. an all-or-nothing 403 would let one
+          bad id cancel the whole batch.
+        - missingIds merges unknown ids, already-deleted ids AND ids that
+          exist in another conversation. one bucket on purpose: the API must
+          never confirm that a message exists where the caller can't see it.
+          (the conversationId in the findMany where is the security clause)
+        - requestedIds is deduped ([...new Set(...)]), and all five arrays are
+          sorted ascending: findMany has no orderBy, so raw order depended on
+          the query plan and could differ between runs.
+        - re-deleting is a no-op: `deletedAt: null` filters the row out, so it
+          lands in missingIds, not forbiddenIds.
+      fixtures: requester + authors created with createVerifiedUser(), roles
+      set directly via addParticipant() - never through promote/demote, so a
+      broken promote route can't fail this file.
 7.12. [open] pagination cursor math (appController.js:575-577)
       assert before/after ordering AND nextCursor. was wrong once already.
 7.13. [open] DM uniqueness -> 409, plus soft-delete lifecycle (createDm, line 133)

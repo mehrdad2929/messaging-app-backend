@@ -67,6 +67,16 @@ async function createUser(overrides = {}) {
     });
 }
 
+// The common case for app routes: requireVerified 403s every fixture whose
+// email isn't verified, so tests that call /api/* need this preset. It is a
+// wrapper, not a replacement - createUser above is still the only way to make
+// signup-state (unverified), OAuth-only, deleted, or email-less users.
+async function createVerifiedUser(overrides = {}) {
+    // spread order matters: an explicit emailVerified in overrides wins, so a
+    // test can still ask for an unverified user on purpose.
+    return createUser({ emailVerified: new Date(), ...overrides });
+}
+
 // Mirrors what POST /api/conversations writes for group/channel creation: the
 // conversation row plus the creator as OWNER. Pass `participants` to add more
 // members in the same call.
@@ -197,6 +207,7 @@ function cookieFor(user) {
 module.exports = {
     DEFAULT_PASSWORD,
     createUser,
+    createVerifiedUser,
     createConversation,
     createDm,
     addParticipant,

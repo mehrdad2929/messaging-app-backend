@@ -7,6 +7,7 @@ const { resetDb } = require('./helpers/db');
 const {
     DEFAULT_PASSWORD,
     createUser,
+    createVerifiedUser,
     createConversation,
     createDm,
     addParticipant,
@@ -73,6 +74,14 @@ test('createUser hashes the password and allows a missing one', async () => {
         .post('/auth/login')
         .send({ username: oauthUser.username, password: DEFAULT_PASSWORD });
     assert.equal(res.status, 401);
+});
+
+test('createVerifiedUser sets emailVerified, createUser does not', async () => {
+    const plain = await createUser();
+    const verified = await createVerifiedUser();
+
+    assert.equal(plain.emailVerified, null);
+    assert.notEqual(verified.emailVerified, null);
 });
 
 test('cookieFor works without the login route', async () => {
