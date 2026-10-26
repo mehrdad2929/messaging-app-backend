@@ -509,6 +509,9 @@ exports.deleteMessage = async (req, res, next) => {
         const { conversationId } = req.params;
         const { messageIds } = req.body;
         const userId = req.user.id;
+        // The client may repeat an id. Every array this route returns is
+        // set-like, so dedupe up front or requestedIds disagrees with the rest.
+        const requestedIds = [...new Set(messageIds)];
 
         const result = await prisma.$transaction(async (tx) => {
             const existingConversation = await tx.conversation.findFirst({
@@ -527,7 +530,7 @@ exports.deleteMessage = async (req, res, next) => {
 
             // fetch the target messages, with their author's role in THIS conversation
             const existingMessages = await tx.message.findMany({
-                where: { id: { in: messageIds }, conversationId, deletedAt: null },
+                where: { id: { in: requestedIds }, conversationId, deletedAt: null },
                 select: {
                     id: true,
                     userId: true,
@@ -560,18 +563,31 @@ exports.deleteMessage = async (req, res, next) => {
                 });
             }
 
+            const existingIds = existingMessages.map((m) => m.id);
+            // Not found in THIS conversation: unknown id, already deleted, or
+            // an id from another conversation. All three share one bucket on
+            // purpose - the response must never confirm that a message exists
+            // somewhere the caller cannot see.
+            const missingIds = requestedIds.filter((id) => !existingIds.includes(id));
+            // Exists here, but the requester's role cannot delete it.
+            const forbiddenIds = existingIds.filter((id) => !allowedIds.includes(id));
+            const asc = (a, b) => a - b;
+
+            // Sorted for a stable contract: findMany has no orderBy, so raw
+            // row order depends on the query plan and could change between runs.
             return {
-                requestedIds: messageIds,
-                existingIds: existingMessages.map((m) => m.id),
-                deletedIds: allowedIds
+                requestedIds: [...requestedIds].sort(asc),
+                existingIds: [...existingIds].sort(asc),
+                deletedIds: [...allowedIds].sort(asc),
+                missingIds: missingIds.sort(asc),
+                forbiddenIds: forbiddenIds.sort(asc),
             };
         });
 
-        return ok(res, {
-            requestedIds: result.requestedIds,
-            existingIds: result.existingIds,
-            deletedIds: result.deletedIds
-        });
+        // No per-message 403: this is a batch endpoint, so "you may not delete
+        // this one" arrives as 200 + forbiddenIds. A 403 here would have to
+        // delete nothing at all, and one bad id would cancel the whole batch.
+        return ok(res, result);
     } catch (error) {
         next(error);
     }
