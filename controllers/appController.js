@@ -1,4 +1,5 @@
 const prisma = require('../db/prisma');
+const { matchedData } = require('express-validator');
 const { Role, ConversationType } = require('../generated/prisma')
 const { ok, created, httpError } = require('../utils/respond');
 const { issueCodeForUser } = require('../utils/verification');
@@ -274,11 +275,17 @@ exports.createConversation = async (req, res, next) => {
 };
 exports.getUsersConversations = async (req, res, next) => {
     try {
-        const limit = Math.min(req.query.limit || 30, 100);
-        const before = req.query.before;
-        const after = req.query.after;
+        // Same matchedData reason as getConversationMessages: Express 5's
+        // req.query getter throws away toInt().
+        const { before, after, limit } = matchedData(req);
+        const pageSize = Math.min(limit || 30, 100);
         const userId = req.user.id;
-        const searchingConversations = await prisma.conversation.findMany({
+        const goingBack = after === undefined;
+        // Identical cursor math to getConversationMessages (7.12): limit+1 to
+        // learn hasMore, ascending both ways with a negative take for the
+        // backwards direction, and id comparisons instead of Prisma's
+        // cursor+skip (which drops a row when the cursor row is filtered out).
+        const rows = await prisma.conversation.findMany({
             where: {
                 conversationParticipants: {
                     some: { userId, deletedAt: null }
@@ -291,14 +298,17 @@ exports.getUsersConversations = async (req, res, next) => {
             select: {
                 id: true, name: true, conversationType: true
             },
-            orderBy: { id: after ? 'asc' : 'desc' },
-            take: limit
+            orderBy: { id: 'asc' },
+            take: goingBack ? -(pageSize + 1) : pageSize + 1
         })
-        const conversations = after ? searchingConversations : searchingConversations.reverse();
-        const nextCursor = conversations.length === limit
-            ? conversations[after ? conversations.length - 1 : 0].id
+        const hasMore = rows.length > pageSize;
+        const conversations = hasMore
+            ? (goingBack ? rows.slice(1) : rows.slice(0, pageSize))
+            : rows;
+        const nextCursor = hasMore
+            ? conversations[goingBack ? 0 : conversations.length - 1].id
             : null;
-        return ok(res, { conversations, nextCursor })
+        return ok(res, { conversations, nextCursor, hasMore })
     } catch (error) {
         next(error)
     }
@@ -594,11 +604,16 @@ exports.deleteMessage = async (req, res, next) => {
 };
 exports.getConversationMessages = async (req, res, next) => {
     try {
-        const { conversationId } = req.params;
-        const limit = Math.min(req.query.limit || 30, 100);
-        const before = req.query.before;
-        const after = req.query.after;
+        // Express 5 exposes req.query as a getter that re-parses on every
+        // read, so express-validator's toInt() can never write back there
+        // (body and params are plain objects; query is not). matchedData reads
+        // the sanitized values from express-validator's own context instead.
+        const { conversationId, before, after, limit } = matchedData(req);
+        const pageSize = Math.min(limit || 30, 100);
         const userId = req.user.id;
+        // Scrolling towards OLDER messages: the first page (no cursor) and a
+        // `before` cursor. Only `after` moves towards newer messages.
+        const goingBack = after === undefined;
         const result = await prisma.$transaction(async (tx) => {
             const existingConversation = await tx.conversation.findUnique({
                 where: { id: conversationId }
@@ -614,7 +629,13 @@ exports.getConversationMessages = async (req, res, next) => {
             if (!conversationParticipant || conversationParticipant.deletedAt) {
                 throw httpError(403, "you are not a participant in this conversation");
             }
-            const messages = await tx.message.findMany({
+            // NOTE: deliberately `id: { lt/gt }` instead of Prisma's
+            // `cursor: { id } + skip: 1`. That skip is an OFFSET on the
+            // filtered rows, not "skip the cursor row": if the cursor message
+            // was soft-deleted between pages, Prisma also drops the NEXT
+            // visible message (verified against the test DB). lt/gt only
+            // compare ids, so a deleted cursor still yields a correct page.
+            const rows = await tx.message.findMany({
                 where: {
                     conversationId,
                     ...(before && { id: { lt: before } }),
@@ -629,17 +650,29 @@ exports.getConversationMessages = async (req, res, next) => {
                         select: { id: true, username: true, displayName: true, picture: true }
                     }
                 },
-                orderBy: { id: after ? 'asc' : 'desc' },
-                take: limit
+                // Ascending in BOTH directions. A negative take asks Postgres
+                // for the last N rows while keeping that ascending order, so
+                // the first page and `before` need no reverse() and no offset
+                // math. limit+1 fetches one extra row purely to learn whether
+                // another page exists.
+                orderBy: { id: 'asc' },
+                take: goingBack ? -(pageSize + 1) : pageSize + 1,
             })
-            return { messages };
+            return { rows };
         });
-        const messages = after ? result.messages : result.messages.reverse();
-        const nextCursor = messages.length === limit
-            ? messages[after ? messages.length - 1 : 0].id
+        // The extra row is the one FURTHEST from the direction of travel:
+        // oldest when scrolling back, newest when scrolling forward.
+        const hasMore = result.rows.length > pageSize;
+        const messages = hasMore
+            ? (goingBack ? result.rows.slice(1) : result.rows.slice(0, pageSize))
+            : result.rows;
+        // Cursor is the edge the client continues FROM, and only exists when
+        // there is actually another page - so no wasted empty request.
+        const nextCursor = hasMore
+            ? messages[goingBack ? 0 : messages.length - 1].id
             : null;
         return ok(res, {
-            messages, nextCursor
+            messages, nextCursor, hasMore
         });
     } catch (error) {
         next(error);
@@ -749,8 +782,9 @@ exports.promoteConversationParticipant = async (req, res, next) => {
 }
 exports.messagesRead = async (req, res, next) => {
     try {
-        const { conversationId } = req.params;
-        const { from, to } = req.query;
+        // Range endpoint, not keyset pagination: no hasMore/nextCursor here.
+        // matchedData because req.query is a getter under Express 5.
+        const { conversationId, from, to } = matchedData(req);
         const userId = req.user.id
         const result = await prisma.$transaction(async (tx) => {
             const existingConversationParticipant = await tx.conversationParticipant.findUnique({
@@ -762,8 +796,8 @@ exports.messagesRead = async (req, res, next) => {
             const existingMessages = await tx.message.findMany({
                 where: {
                     id: {
-                        gte: parseInt(from),
-                        lte: parseInt(to)
+                        gte: from,
+                        lte: to
                     },
                     conversationId,
                     deletedAt: null, deletedById: null
@@ -773,8 +807,8 @@ exports.messagesRead = async (req, res, next) => {
             const messagesReadBefore = await tx.messageRead.findMany({
                 where: {
                     messageId: {
-                        gte: parseInt(from),
-                        lte: parseInt(to)
+                        gte: from,
+                        lte: to
                     },
                     userId,
                 },
