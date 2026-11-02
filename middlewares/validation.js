@@ -1,5 +1,15 @@
 const { normalizeEmail } = require('../utils/normalize')
 const { body, param, query, validationResult } = require('express-validator');
+// Conversation list cursors are "<epochMillis>_<conversationId>". The id is
+// the tiebreak for lastMessageAt, which is not unique. Decode here so a bad
+// cursor is a 400 instead of a Prisma 500.
+const isConversationCursor = (value) => {
+    if (typeof value !== 'string' || !/^\d+_\d+$/.test(value)) return false;
+    const [at, id] = value.split('_').map(Number);
+    return Number.isSafeInteger(at)
+        && Number.isSafeInteger(id)
+        && !Number.isNaN(new Date(at).getTime());
+};
 exports.signupValidation = [
     body('username').trim().notEmpty().withMessage('Username is required'),
     body('displayName').trim().notEmpty().withMessage('displayname is required'),
@@ -124,12 +134,10 @@ exports.deleteConversationValidation = [
 exports.getUsersConversationsValidation = [
     query('after')
         .optional()
-        .isInt({ min: 1 }).withMessage('after must be a positive integer')
-        .toInt(),
+        .custom(isConversationCursor).withMessage('after must be a valid cursor'),
     query('before')
         .optional()
-        .isInt({ min: 1 }).withMessage('before must be a positive integer')
-        .toInt()
+        .custom(isConversationCursor).withMessage('before must be a valid cursor')
         .custom((value, { req }) => {
             if (value !== undefined && req.query.after !== undefined) {
                 throw new Error('cannot provide both before and after');

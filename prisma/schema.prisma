@@ -88,6 +88,8 @@ model Conversation {
     conversationParticipants ConversationParticipant[]
     conversationType         ConversationType          @default(DM)
     dmKey                    String?                   @unique
+    // Last activity for list ordering: set on creation, bumped by createMessage.
+    lastMessageAt            DateTime                  @default(now())
     deletedAt                DateTime?
     deletedBy                User?                     @relation("conversationDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
     deletedById              Int?

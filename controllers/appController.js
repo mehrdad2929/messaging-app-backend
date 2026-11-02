@@ -273,6 +273,17 @@ exports.createConversation = async (req, res, next) => {
         next(error);
     }
 };
+// Conversation list cursors carry both halves of the sort key because
+// lastMessageAt is not unique: millisecond-precision timestamps collide
+// routinely when several conversations are created together. Message pages
+// keep plain integer cursors - they sort by id, which is unique.
+const parseConversationCursor = (cursor) => {
+    const [at, id] = cursor.split('_');
+    return { at: new Date(Number(at)), id: Number(id) };
+};
+const encodeConversationCursor = (conversation) =>
+    `${conversation.lastMessageAt.getTime()}_${conversation.id}`;
+
 exports.getUsersConversations = async (req, res, next) => {
     try {
         // Same matchedData reason as getConversationMessages: Express 5's
@@ -280,33 +291,49 @@ exports.getUsersConversations = async (req, res, next) => {
         const { before, after, limit } = matchedData(req);
         const pageSize = Math.min(limit || 30, 100);
         const userId = req.user.id;
+        // Newest activity first, both within a page and across pages. `before`
+        // still walks older and `after` newer, exactly like messages.
         const goingBack = after === undefined;
-        // Identical cursor math to getConversationMessages (7.12): limit+1 to
-        // learn hasMore, ascending both ways with a negative take for the
-        // backwards direction, and id comparisons instead of Prisma's
-        // cursor+skip (which drops a row when the cursor row is filtered out).
+        const cursorValue = goingBack ? before : after;
+        const cursor = cursorValue ? parseConversationCursor(cursorValue) : null;
+        // The id tiebreak matters: comparing only lastMessageAt would skip or
+        // repeat rows whenever two conversations share a timestamp.
+        const cursorWhere = cursor && {
+            OR: [
+                { lastMessageAt: goingBack ? { lt: cursor.at } : { gt: cursor.at } },
+                { lastMessageAt: cursor.at, id: goingBack ? { lt: cursor.id } : { gt: cursor.id } }
+            ]
+        };
         const rows = await prisma.conversation.findMany({
             where: {
                 conversationParticipants: {
                     some: { userId, deletedAt: null }
                 },
-                ...(before && { id: { lt: before } }),
-                ...(after && { id: { gt: after } }),
+                ...cursorWhere,
                 deletedAt: null
 
             },
             select: {
-                id: true, name: true, conversationType: true
+                id: true, name: true, conversationType: true, lastMessageAt: true
             },
-            orderBy: { id: 'asc' },
-            take: goingBack ? -(pageSize + 1) : pageSize + 1
+            orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+            // Mirror of the messages endpoint because the display order is
+            // descending. Scrolling back keeps the newest pageSize rows and
+            // drops the extra at the END (oldest); scrolling forward takes the
+            // last pageSize+1 (closest to the cursor) and drops the extra at
+            // the FRONT (newest). The extra row is only there to learn hasMore.
+            take: goingBack ? pageSize + 1 : -(pageSize + 1)
         })
         const hasMore = rows.length > pageSize;
         const conversations = hasMore
-            ? (goingBack ? rows.slice(1) : rows.slice(0, pageSize))
+            ? (goingBack ? rows.slice(0, pageSize) : rows.slice(1))
             : rows;
+        // Cursor is the edge to continue FROM: oldest in the page when going
+        // back, newest when going forward. Null when there is no next page.
         const nextCursor = hasMore
-            ? conversations[goingBack ? 0 : conversations.length - 1].id
+            ? encodeConversationCursor(
+                conversations[goingBack ? conversations.length - 1 : 0]
+            )
             : null;
         return ok(res, { conversations, nextCursor, hasMore })
     } catch (error) {
@@ -506,6 +533,12 @@ exports.createMessage = async (req, res, next) => {
                         select: { id: true, username: true, displayName: true, picture: true }
                     }
                 }
+            });
+            // Bump the list position in the same transaction, so a message can
+            // never be committed without its conversation moving to the top.
+            await tx.conversation.update({
+                where: { id: conversationId },
+                data: { lastMessageAt: message.createdAt }
             });
             return { message }
         })
