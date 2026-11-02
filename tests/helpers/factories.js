@@ -147,19 +147,29 @@ async function addParticipant(conversation, user, role = 'MEMBER') {
     });
 }
 
+// Also bumps Conversation.lastMessageAt, mirroring POST /messages. Tests
+// arrange through this factory, so activity ordering would be untestable if
+// only the controller bumped it.
 async function createMessage({
     conversation,
     author,
     content = 'hello',
     ...rest
 }) {
-    return prisma.message.create({
-        data: {
-            content,
-            conversationId: conversation.id,
-            userId: author.id,
-            ...rest,
-        },
+    return prisma.$transaction(async (tx) => {
+        const message = await tx.message.create({
+            data: {
+                content,
+                conversationId: conversation.id,
+                userId: author.id,
+                ...rest,
+            },
+        });
+        await tx.conversation.update({
+            where: { id: conversation.id },
+            data: { lastMessageAt: message.createdAt },
+        });
+        return message;
     });
 }
 
