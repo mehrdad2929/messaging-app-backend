@@ -221,8 +221,82 @@ decisions made:
       fixtures: requester + authors created with createVerifiedUser(), roles
       set directly via addParticipant() - never through promote/demote, so a
       broken promote route can't fail this file.
-7.12. [open] pagination cursor math (appController.js:575-577)
-      assert before/after ordering AND nextCursor. was wrong once already.
+7.12. [done] pagination cursor math: tests/getConversationMessages.test.js, 8 tests
+      (getConversationMessages is appController.js:595; the old 575 ref was
+      stale after the 7.11 rewrite - always re-grep before trusting a line
+      ref in this file).
+      contract:
+        - messages are ALWAYS returned oldest -> newest, in all three modes:
+          no cursor = newest `limit`; before=X = the limit immediately older
+          than X; after=X = the limit immediately newer than X.
+        - hasMore (new): is there another page in this direction?
+        - nextCursor: the edge to continue FROM (oldest in page when going
+          back, newest when going forward), and null whenever hasMore is
+          false - so the client never needs a throwaway request to find the
+          end. (the old length===limit check emitted a cursor when a full
+          page happened to be the end)
+      implementation:
+        - fetch limit+1 and trim the extra row (oldest when going back,
+          newest when going forward). that is how hasMore is known without a
+          second query.
+        - orderBy id asc in BOTH directions; take is NEGATIVE when going
+          back. Postgres returns the last N rows already ascending, so there
+          is no reverse() and no offset math.
+        - goingBack = (after === undefined): first page and before scroll
+          back; only after moves forward.
+      two real bugs found while writing this:
+        - Express 5 exposes req.query as a getter, so express-validator's
+          toInt() never writes back. before/after arrived as STRINGS and
+          `id: { lt: "5" }` threw PrismaClientValidationError -> every cursor
+          request was a 500. limit survived only because Math.min coerces.
+          the controller now reads them through matchedData(req), which holds
+          the sanitized values express-validator produced (the same fix is
+          used by 7.12b/7.12c); a raw Number() was the first fix.
+        - Prisma `cursor: { id } + skip: 1` is WRONG for this app: skip is an
+          OFFSET on the filtered rows, not "skip the cursor row". proven on
+          the test DB: with m4 soft-deleted, cursor=4/skip1 returned [6,7]
+          instead of [5,6,7] forward and [1,2] instead of [1,2,3] backward -
+          it drops the next VISIBLE message whenever the cursor row itself is
+          filtered out (exactly what happens when a message is deleted between
+          pages). a nonexistent cursor id also returns [] and silently ends
+          the feed. lt/gt compare ids only, so they stay correct.
+      tests: first page; before walk (3 pages partition 1..7, no dup/gap);
+      after walk; exactly-limit-but-no-more (hasMore false); default limit 30;
+      soft-deleted row skipped without consuming the page; a cursor pointing
+      at a soft-deleted row loses no neighbour (regression guard for the
+      Prisma-cursor trap); before+after -> 400.
+7.12b. [done] conversations list pagination, now ordered by last activity:
+      tests/getUsersConversations.test.js, 10 tests.
+      feature: Conversation.lastMessageAt (non-null, default now()) + migration
+      backfill from MAX(message.createdAt), deleted messages included. bumped in
+      createMessage (inside its transaction) and mirrored by the createMessage
+      factory; createDm/createGroupOrChannel get the DB default. no rollback
+      when the newest message is deleted: the activity happened when it was
+      sent. reading does not bump.
+      contract: newest activity first (lastMessageAt desc, id desc tiebreak),
+      and pages are serialized descending too; `before` walks older and
+      `after` newer still hold. hasMore/nextCursor as in 7.12, but nextCursor
+      is "<epochMillis>_<conversationId>": lastMessageAt is NOT unique (ms
+      precision, and batches collide), so id is the tiebreak and the cursor
+      has to carry both. validation rejects anything else with 400.
+      trim is the mirror of messages because the order is descending: going
+      back take +(limit+1) and trim the LAST; forward take -(limit+1) and trim
+      the FIRST.
+      tests: first page + lastMessageAt payload; before walk partitions 7 (the
+      activity order is deliberately a permutation of id order); after walk;
+      exactly-limit-no-more; default 30; soft-deleted conversation skipped;
+      participant filter (foreign + removed participant, both with newer
+      activity so a broken filter would land at the top); a new message bumps
+      the oldest conversation to first; before+after 400; malformed or
+      impossible cursor 400.
+7.12c. [done] messagesRead range tests: tests/messagesRead.test.js, 9 tests.
+      range, not pagination: marks other users' unread messages in [from,to]
+      only; own messages skipped; re-read is a state no-op (201 + []); to<from
+      400; from/to required; non-participant and removed participant 404; a
+      foreign conversation id inside the range is not marked; soft-deleted
+      message skipped; nothing markable -> 201 + [].
+7.12d. [open] index Conversation(lastMessageAt, id) if the list grows; the
+      ordering query currently has no supporting index.
 7.13. [open] DM uniqueness -> 409, plus soft-delete lifecycle (createDm, line 133)
 7.14. [open] validation: POST /conversations {conversationType:"DM"} with no
       targetUserId -> 400. (was broken, fixed; test locks it in)
