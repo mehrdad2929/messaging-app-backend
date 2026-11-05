@@ -84,7 +84,7 @@ appRouter.post('/api/conversations',
     appController.createConversation
 );
 //get users conversations(with pagination like getConversationMesasges)
-//api/conversations?before=value1&limit=value2
+//api/conversations?before=value1&after=value2&limit=value2
 appRouter.get('/api/conversations',
     readLimiter,
     authenticateToken,

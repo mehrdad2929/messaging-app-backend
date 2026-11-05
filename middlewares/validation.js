@@ -23,11 +23,6 @@ exports.loginValidation = [
     body('username').notEmpty().withMessage('Username is required'),
     body('password').notEmpty().withMessage('Password is required')
 ];
-//TODO: doing now
-// request-code takes NO body: the email comes from the logged-in user's own
-// row (see requestCode). There is nothing to validate, so this route skips
-// validation middleware entirely — the rate limiter + authenticateToken are
-// the guards.
 exports.verifyCodeValidation = [
     body('code').trim().matches(/^\d{6}$/).withMessage('Code must be 6 digits')
 ];
