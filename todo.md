@@ -297,9 +297,20 @@ decisions made:
       message skipped; nothing markable -> 201 + [].
 7.12d. [open] index Conversation(lastMessageAt, id) if the list grows; the
       ordering query currently has no supporting index.
-7.13. [open] DM uniqueness -> 409, plus soft-delete lifecycle (createDm, line 133)
+7.13. [open] DM uniqueness -> 409, plus soft-delete lifecycle (createDm,
+      appController.js:186). code exists; test missing.
+      scope: duplicate DM same order -> 409 "this dm already exist" and only
+      one conversation row; duplicate REVERSED order -> also 409 (dmKey is
+      sorted, so order independence is the real assertion); self-DM -> 403;
+      soft-deleted target user -> 404; removed participant can be restored via
+      addConversationParticipant (deletedAt back to null); DM delete -> 403.
+      arrange with createVerifiedUser and create BOTH DMs through the real
+      POST /api/conversations: the createDm() factory would throw P2002 in the
+      arrange step instead of exercising the 409 path.
 7.14. [open] validation: POST /conversations {conversationType:"DM"} with no
       targetUserId -> 400. (was broken, fixed; test locks it in)
+      status: validation already implemented at middlewares/validation.js:81-92;
+      only the test is missing.
 7.15. [open] cross-conversation isolation: admin of conv A cannot delete a
       message in conv B (proves why conversationId belongs in the findMany)
 7.16. [open] createConversation happy paths: DM, GROUPCHAT, CHANNEL

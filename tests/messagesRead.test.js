@@ -11,7 +11,7 @@ const {
     loginAs,
 } = require('./helpers/factories');
 
-// 7.13 - POST /api/conversations/:id/messages/read?from=&to=.
+// 7.12c - POST /api/conversations/:id/messages/read?from=&to=.
 //
 // This is a RANGE endpoint, not pagination: one request marks every visible
 // message in [from, to] that the requester did not author and had not already
