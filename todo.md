@@ -76,6 +76,28 @@ R. [security, design first] changing/resetting a password does NOT invalidate
    fix: add tokenVersion (or passwordChangedAt) to User, bump it on password
    change/reset, and in authenticateToken reject tokens whose iat predates it.
    needs one column + migration, and logout-everywhere can reuse the same bump.
+S. [future, design first] leaving a conversation (self-removal). Today
+   DELETE /conversations/:id/participants/:targetUserId lets a MEMBER remove
+   themselves from a group/channel, but a DM is blocked by the DM guard in
+   deleteConversationParticipant. Allowing self-leave from a DM needs
+   `conversationType === DM && userId !== targetUserId`; addConversationParticipant
+   must keep refusing DMs. dmKey @unique is then the hard part: the leaver's
+   pair can no longer create the DM again (409), and there is no restore route.
+   open questions:
+     - history visibility on return: does the leaver see messages sent while
+       they were away, or only up to their leave date?
+     - messages sent to someone who left: still delivered (rows stay), or a
+       send-time membership check refuses them?
+     - can a DM bring back someone who left: restore the same conversation by
+       dmKey on the next create, or keep it closed forever?
+     - 200 vs 201 when restoring an existing conversation.
+     - optional pair-table cleanup: if DMs get a dedicated user-pair table (or
+       dmKey rows become reusable), decide how old rows are freed.
+     - if a CHECK (the two dmKey ids differ) migration is added, test
+       prisma.conversation.create({ dmKey: '3_3' }) rejects it; the API already
+       403s self-DM before reaching the DB.
+   also flips the 7.13 test "leaving a DM as yourself -> 403"; move that test
+   to deleteConversationParticipant.test.js when the behavior lands.
 
 ===============================================================
 7.TESTING ROADMAP (detail for step 3 above)
@@ -297,23 +319,46 @@ decisions made:
       message skipped; nothing markable -> 201 + [].
 7.12d. [open] index Conversation(lastMessageAt, id) if the list grows; the
       ordering query currently has no supporting index.
-7.13. [open] DM uniqueness -> 409, plus soft-delete lifecycle (createDm,
-      appController.js:186). code exists; test missing.
-      scope: duplicate DM same order -> 409 "this dm already exist" and only
-      one conversation row; duplicate REVERSED order -> also 409 (dmKey is
-      sorted, so order independence is the real assertion); self-DM -> 403;
-      soft-deleted target user -> 404; removed participant can be restored via
-      addConversationParticipant (deletedAt back to null); DM delete -> 403.
-      arrange with createVerifiedUser and create BOTH DMs through the real
-      POST /api/conversations: the createDm() factory would throw P2002 in the
-      arrange step instead of exercising the 409 path.
-7.14. [open] validation: POST /conversations {conversationType:"DM"} with no
-      targetUserId -> 400. (was broken, fixed; test locks it in)
-      status: validation already implemented at middlewares/validation.js:81-92;
-      only the test is missing.
+7.13. [done] DM uniqueness -> 409, plus soft-delete lifecycle:
+      tests/createConversation.test.js, 10 tests.
+      contract:
+        - POST /conversations {conversationType:"DM", targetUserId} creates
+          ONE conversation whose dmKey is [lowId,highId] sorted, so the pair is
+          unique in either order; both participants are MEMBER.
+        - duplicate in either order -> 409 "this dm already exist" from the
+          P2002-on-dmKey mapping; the original conversation is untouched.
+        - two CONCURRENT identical creates -> exactly one 201 and one 409; the
+          loser's transaction rolls back, leaving 1 conversation + 2
+          participants. That is the test that exercises the unique index.
+        - soft-deleted target and nonexistent target -> the SAME 404
+          "no such targetUser", so the API never confirms an id exists.
+        - self-DM -> 403 "you can not have DM with yourself" from the
+          controller (moved out of validation 2026-11-06).
+        - DM without targetUserId -> 400 with one error on path targetUserId
+          (7.14).
+        - DELETE a DM -> 403 "You can not delete a DM"; deletedAt untouched.
+        - leaving a DM as yourself -> 403 "cannot delete a participant from a
+          DM"; membership is immutable until todo S lands, when this test flips
+          and moves to deleteConversationParticipant.test.js.
+      removed from the old scope: "removed participant can be restored via
+      addConversationParticipant" is impossible for DMs - add blocks DMs before
+      its restore branch, and a normally-created DM has both members as MEMBER
+      (the MEMBER role check fires first anyway).
+      arrange: both duplicate calls go through the real endpoint (a factory
+      second call would throw P2002 in arrange); delete/leave tests arrange the
+      DM with createDm(). every fixture is createVerifiedUser().
+7.14. [done] validation: POST /conversations {conversationType:"DM"} with no
+      targetUserId -> 400. covered in tests/createConversation.test.js (asserts
+      exactly one error, with path "targetUserId").
+      the 2026-11-06 validation rewrite also made targetUserId and
+      conversationName conditional on conversationType and removed the
+      group/channel false positive where targetUserId=self was rejected.
 7.15. [open] cross-conversation isolation: admin of conv A cannot delete a
       message in conv B (proves why conversationId belongs in the findMany)
 7.16. [open] createConversation happy paths: DM, GROUPCHAT, CHANNEL
+      (append to tests/createConversation.test.js in a separate commit).
+      include a regression: GROUPCHAT with targetUserId = self -> 201 (locks
+      the validator false-positive removed 2026-11-06).
 7.17. [open] email verification cases (all proven manually 2026-10-11, lock them in):
       signup auto-sends (verificationSent:true); gated route 403 while
       unverified; cooldown 429 on instant resend; wrong code 400; verify
