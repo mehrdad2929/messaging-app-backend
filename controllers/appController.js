@@ -184,15 +184,15 @@ exports.deleteUser = async (req, res, next) => {
 };
 
 const createDm = async ({ targetUserId, currentUserId }) => {
+    if (targetUserId === currentUserId) {
+        throw httpError(403, 'you can not have DM with yourself');
+    }
     const result = await prisma.$transaction(async (tx) => {
         const targetUser = await tx.user.findUnique({
-            where: { id: targetUserId, deletedAt: null }
+            where: { id: targetUserId }
         });
-        if (!targetUser) {
+        if (!targetUser || targetUser.deletedAt) {
             throw httpError(404, 'no such targetUser');
-        }
-        if (targetUserId == currentUserId) {
-            throw httpError(403, 'you can not have DM with yourself');
         }
         const dmKey = [currentUserId, targetUserId].sort((a, b) => a - b).join('_');
         const conversation = await tx.conversation.create({
@@ -415,7 +415,7 @@ exports.addConversationParticipant = async (req, res, next) => {
                     id: targetUserId,
                 }
             });
-            if (!targetUser) {
+            if (!targetUser || targetUser.deletedAt) {
                 throw httpError(404, "no such a user")
             }
             const existingParticipant = await tx.conversationParticipant.findUnique({

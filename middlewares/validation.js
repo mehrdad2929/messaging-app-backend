@@ -43,7 +43,6 @@ exports.userUpdateValidation = [
     body('newEmail')
         .optional()
         .customSanitizer(normalizeEmail)
-        .notEmpty().withMessage('Email cannot be empty')
         .isEmail().withMessage('Valid email is required'),
 ];
 exports.passwordSetForOAuthValidaiton = [
@@ -55,75 +54,40 @@ exports.resetPasswordValidaiton = [
 ];
 
 exports.createConversationValidation = [
-    body('conversationParticipantsIds')
-        .optional()
-        .notEmpty().withMessage('conversationParticipantsIds is required')
-        .isArray({ min: 0, max: 100 }).withMessage('conversationParticipantsIds must be an array between 0 and 100 size'),
-    body('conversationParticipantsIds.*')
-        .optional()
-        .isInt().withMessage('each participant id must be an integer')
-        .toInt(),
+    body('conversationType')
+        .isIn(['DM', 'GROUPCHAT', 'CHANNEL'])
+        .withMessage('conversationType must be DM, GROUPCHAT or CHANNEL'),
     body('targetUserId')
-        .optional()
-        .notEmpty().withMessage('targetUserId is required')
-        .isInt().withMessage('targetUserId should be integer')
+        .if(body('conversationType').equals('DM'))
+        .exists().withMessage('targetUserId is required for a DM').bail()
+        .isInt({ min: 1 }).withMessage('targetUserId must be a positive integer')
         .toInt(),
     body('conversationName')
+        .if(body('conversationType').isIn(['GROUPCHAT', 'CHANNEL']))
+        .exists().withMessage('conversationName is required for a group or channel').bail()
+        .isString().withMessage('conversationName must be a string').bail()
+        .trim()
+        .notEmpty().withMessage('conversationName is required for a group or channel')
+        .isLength({ max: 100 }).withMessage('conversationName must be at most 100 characters'),
+    body('conversationParticipantsIds')
         .optional()
-        .notEmpty().withMessage('conversationName is required')
-        .isString().withMessage('conversationName should be string'),
-    body('conversationType')
-        .notEmpty().withMessage('conversationType is required')
-        .isIn(['DM', 'GROUPCHAT', 'CHANNEL']).withMessage('conversationType must be DM,GROUPCHAT,CHANNEL'),
-    body().custom((_, { req }) => {
-        const { conversationType, conversationName, conversationParticipantsIds, targetUserId } = req.body;
-        if (conversationType === 'DM' && targetUserId === undefined) {
-            throw new Error('you need to provide targetUserId for DM');
-        }
-        if (targetUserId === req.user.id) {
-            throw new Error(' you can not have DM with yourself');
-        }
-        if ((conversationType === 'GROUPCHAT' || conversationType === 'CHANNEL') && conversationName === undefined) {
-            throw new Error(`you need to provide conversationName for ${conversationType}`);
-        }
-        return true;
-    }),
+        .isArray({ max: 100 }).withMessage('conversationParticipantsIds must be an array of at most 100 ids'),
+    body('conversationParticipantsIds.*')
+        .isInt({ min: 1 }).withMessage('each participant id must be a positive integer')
+        .toInt(),
 ];
-exports.addConversationParticipantValidation = [
-    param('conversationId')
-        .notEmpty().withMessage('conversationId is required')
-        .isInt().withMessage('conversationId must be an integer').toInt(),
-    param('targetUserId')
-        .notEmpty().withMessage('targetUserId is required')
-        .isInt().withMessage('targetUserId must be an integer').toInt()
+
+const participantParamsValidation = [
+    param('conversationId').isInt({ min: 1 }).withMessage('conversationId must be an integer').toInt(),
+    param('targetUserId').isInt({ min: 1 }).withMessage('targetUserId must be an integer').toInt(),
 ];
-exports.deleteConversationParticipantValidation = [
-    param('conversationId')
-        .notEmpty().withMessage('conversationId is required')
-        .isInt().withMessage('conversationId must be an integer').toInt(),
-    param('targetUserId')
-        .notEmpty().withMessage('targetUserId is required')
-        .isInt().withMessage('targetUserId must be an integer').toInt()
-];
-exports.promoteConversationParticipantValidation = [
-    param('conversationId')
-        .notEmpty().withMessage('conversationId is required')
-        .isInt().withMessage('conversationId must be an integer').toInt(),
-    param('targetUserId')
-        .notEmpty().withMessage('targetUserId is required')
-        .isInt().withMessage('targetUserId must be an integer').toInt()
-];
-exports.demoteConversationParticipantValidation = [
-    param('conversationId')
-        .notEmpty().withMessage('conversationId is required')
-        .isInt().withMessage('conversationId must be an integer').toInt(),
-    param('targetUserId')
-        .notEmpty().withMessage('targetUserId is required')
-        .isInt().withMessage('targetUserId must be an integer').toInt()
-];
+exports.addConversationParticipantValidation = participantParamsValidation;
+exports.deleteConversationParticipantValidation = participantParamsValidation;
+exports.promoteConversationParticipantValidation = participantParamsValidation
+exports.demoteConversationParticipantValidation = participantParamsValidation;
+
 exports.deleteConversationValidation = [
     param('conversationId')
-        .notEmpty().withMessage('conversationId is required')
         .isInt().withMessage('conversationId must be an integer').toInt(),
 ];
 exports.getUsersConversationsValidation = [
@@ -186,7 +150,6 @@ exports.messagesReadValidation = [
 ];
 exports.createMessageValidation = [
     param('conversationId')
-        .notEmpty().withMessage('conversationId is required')
         .isInt().withMessage('conversationId must be an integer')
         .toInt(),
     body('messageContent')
@@ -196,7 +159,6 @@ exports.createMessageValidation = [
 ];
 exports.deleteMessageValidation = [
     param('conversationId')
-        .notEmpty().withMessage('conversationId is required')
         .isInt().withMessage('conversationId must be an integer')
         .toInt(),
     body('messageIds')
