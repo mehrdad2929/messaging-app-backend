@@ -317,8 +317,30 @@ decisions made:
       400; from/to required; non-participant and removed participant 404; a
       foreign conversation id inside the range is not marked; soft-deleted
       message skipped; nothing markable -> 201 + [].
-7.12d. [open] index Conversation(lastMessageAt, id) if the list grows; the
-      ordering query currently has no supporting index.
+7.12d. [open, deferred] Conversation list ordering index.
+       No index supports `ORDER BY lastMessageAt DESC, id DESC` today. Do not
+       add it preemptively.
+       trigger: run EXPLAIN (ANALYZE, BUFFERS) on the real getUsersConversations
+       query against seeded data first. Add the index only when a realistic
+       account loses the index (Sort node) or examines rows far beyond the page
+       size. Seed at least 1k and 10k conversations for one user, with most rows
+       belonging to other users, then compare with and without the index on the
+       test DB (CREATE INDEX / DROP INDEX locally; no migration until the
+       trigger fires).
+       what it fixes: only the ordering and cursor half of the query, and only
+       for accounts with thousands of conversations (bots, admins). It does not
+       remove the participant EXISTS filter - the planner may still drive from
+       ConversationParticipant(userId, conversationId) and sort.
+       if every user needs it, the real fix is participant-side:
+       copy lastMessageAt onto ConversationParticipant and index
+       (userId, lastMessageAt, conversationId) so a user's page is one range
+       scan + PK lookups into Conversation. A plain ascending index serves
+       DESC, DESC by scanning backwards. cost: every message updates one row
+       per participant plus index maintenance, so a 10k-member channel pays
+       10k writes per message - good for many-conversations-per-user with
+       modest groups, bad for huge channels. do not adopt blindly.
+       note: the tiebreak must be conversationId, not participant.id; the
+       cursor is (lastMessageAt, conversationId) and participant.id is unrelated.
 7.13. [done] DM uniqueness -> 409, plus soft-delete lifecycle:
       tests/createConversation.test.js, 10 tests.
       contract:
