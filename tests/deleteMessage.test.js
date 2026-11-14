@@ -194,3 +194,129 @@ test('deleting the same message twice is a no-op the second time', async () => {
     assert.deepEqual(second.body.missingIds, [message.id]);
     assert.deepEqual(second.body.forbiddenIds, []);
 });
+
+test('attacker:Admin in A,target:participant in A and B,message:in B,req made from convA', async () => {
+    const attacker = await createVerifiedUser();
+    const target = await createVerifiedUser();
+    const convA = await createConversation();
+    const convB = await createConversation();
+
+    await addParticipant(convA, attacker, "ADMIN");
+    await addParticipant(convA, target, "MEMBER");
+    await addParticipant(convB, target, "MEMBER");
+
+    const message = await createMessage({ conversation: convB, author: target });
+
+    const res = await deleteMessages(
+        convA.id,
+        await loginAs(attacker),
+        [message.id]
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.requestedIds, [message.id]);
+    assert.deepEqual(res.body.existingIds, []);
+    assert.deepEqual(res.body.deletedIds, []);
+    assert.deepEqual(res.body.missingIds, [message.id]);
+    assert.deepEqual(res.body.forbiddenIds, []);
+    //db check:
+    const row = await prisma.message.findUnique({ where: { id: message.id } });
+    assert.equal(row.deletedAt, null);
+    assert.equal(row.deletedById, null);
+});
+
+
+test('attacker:owner in A,target:participant in A and B,message:in B,req made from convA', async () => {
+    const attacker = await createVerifiedUser();
+    const target = await createVerifiedUser();
+    const convA = await createConversation({ createdBy: attacker });
+    const convB = await createConversation();
+
+    await addParticipant(convA, target, "MEMBER");
+    await addParticipant(convB, target, "MEMBER");
+
+    const message = await createMessage({ conversation: convB, author: target });
+
+    const res = await deleteMessages(
+        convA.id,
+        await loginAs(attacker),
+        [message.id]
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.requestedIds, [message.id]);
+    assert.deepEqual(res.body.existingIds, []);
+    assert.deepEqual(res.body.deletedIds, []);
+    assert.deepEqual(res.body.missingIds, [message.id]);
+    assert.deepEqual(res.body.forbiddenIds, []);
+    //db check:
+    const row = await prisma.message.findUnique({ where: { id: message.id } });
+    assert.equal(row.deletedAt, null);
+    assert.equal(row.deletedById, null);
+});
+
+
+test('attacker:owner in A and B,target:participant in A and B,message:in B,req made from convA', async () => {
+    const attacker = await createVerifiedUser();
+    const target = await createVerifiedUser();
+    const convA = await createConversation({ createdBy: attacker });
+    const convB = await createConversation({ createdBy: attacker });
+
+    await addParticipant(convA, target, "MEMBER");
+    await addParticipant(convB, target, "MEMBER");
+
+    const message = await createMessage({ conversation: convB, author: target });
+
+    const res = await deleteMessages(
+        convA.id,
+        await loginAs(attacker),
+        [message.id]
+    );
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.requestedIds, [message.id]);
+    assert.deepEqual(res.body.existingIds, []);
+    assert.deepEqual(res.body.deletedIds, []);
+    assert.deepEqual(res.body.missingIds, [message.id]);
+    assert.deepEqual(res.body.forbiddenIds, []);
+    //db check:
+    const row = await prisma.message.findUnique({ where: { id: message.id } });
+    assert.equal(row.deletedAt, null);
+    assert.equal(row.deletedById, null);
+});
+
+test('attacker:owner in A and B,target:participant in A and B,message:in B,req made from convA,with mixed messageId batch', async () => {
+    const attacker = await createVerifiedUser();
+    const target = await createVerifiedUser();
+    const convANormalMember = await createVerifiedUser();
+
+    const convA = await createConversation({ createdBy: attacker });
+    const convB = await createConversation({ createdBy: attacker });
+
+    await addParticipant(convA, convANormalMember, "MEMBER");
+    await addParticipant(convA, target, "MEMBER");
+    await addParticipant(convB, target, "MEMBER");
+    const message = await createMessage({ conversation: convB, author: target });
+    const normalConvAMessage = await createMessage({ conversation: convA, author: convANormalMember });
+
+    const res = await deleteMessages(
+        convA.id,
+        await loginAs(attacker),
+        [message.id, normalConvAMessage.id]
+    );
+
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.requestedIds, [message.id, normalConvAMessage.id].sort(asc));
+    assert.deepEqual(res.body.existingIds, [normalConvAMessage.id]);
+    assert.deepEqual(res.body.deletedIds, [normalConvAMessage.id]);
+    assert.deepEqual(res.body.missingIds, [message.id]);
+    assert.deepEqual(res.body.forbiddenIds, []);
+
+    // B's message survives
+    const rowB = await prisma.message.findUnique({ where: { id: message.id } });
+    assert.equal(rowB.deletedAt, null);
+    assert.equal(rowB.deletedById, null);
+
+    // A's message was really deleted, by the attacker
+    const rowA = await prisma.message.findUnique({ where: { id: normalConvAMessage.id } });
+    assert.notEqual(rowA.deletedAt, null);
+    assert.equal(rowA.deletedById, attacker.id);
+});
+

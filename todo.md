@@ -375,7 +375,7 @@ decisions made:
       the 2026-11-06 validation rewrite also made targetUserId and
       conversationName conditional on conversationType and removed the
       group/channel false positive where targetUserId=self was rejected.
-7.15. [open] cross-conversation isolation: admin of conv A cannot delete a
+7.15. [done] cross-conversation isolation: admin of conv A cannot delete a
       message in conv B (proves why conversationId belongs in the findMany)
 7.16. [open] createConversation happy paths: DM, GROUPCHAT, CHANNEL
       (append to tests/createConversation.test.js in a separate commit).
