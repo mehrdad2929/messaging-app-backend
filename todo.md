@@ -387,15 +387,19 @@ decisions made:
           row: targetUserId is inert for groups (locks the validator false
           positive removed 2026-11-06).
         - the DM happy path is the first test (7.13), so no duplicate here.
-7.17. [open] email verification cases (all proven manually 2026-10-11, lock them in):
-      signup auto-sends (verificationSent:true); gated route 403 while
-      unverified; cooldown 429 on instant resend; wrong code 400; verify
-      200; code reuse 400; burn after 5 misses (consumedAt set, attempts:5);
-      email change re-gates + resends (verificationSent:true); same-email
-      edit sends nothing (no verificationSent key). needs
-      DEV_RETURN_CODE=true in .env.test so the suite reads codes with no
-      inbox (NEVER in a real env). purge a user's codes directly when a
-      test needs a fresh code without waiting out the 60s cooldown.
+7.17. [done] email verification cases: tests/emailVerification.test.js, 9 tests.
+      (all proven manually 2026-10-11, now locked in):
+      signup auto-sends (verificationSent:true, one live code row); gated route
+      403 while unverified; cooldown 429 on instant resend; wrong code 400 and
+      no write to the user; verify 200 + code consumed + gate opens; code reuse
+      400; burn after 5 misses (consumedAt set, attempts:5, the real code then
+      also 400); email change re-gates + resends (verificationSent:true, new
+      emailVerified null); same-email edit sends nothing (no verificationSent
+      key) and keeps emailVerified.
+      codes come from the response body via DEV_RETURN_CODE=true in .env.test
+      (NEVER in a real env). SMTP_HOST=127.0.0.1:1 makes the mailer fail fast
+      for the same reason. no purge helper was needed: resetDb gives each test
+      a fresh user, so only the cooldown test sends twice on purpose.
 
 --- step 4: ci (do last, once step 3 is green locally) ---
 run npx prisma migrate in the ci so the migration exist in the ci
