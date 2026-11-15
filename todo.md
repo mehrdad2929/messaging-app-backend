@@ -377,10 +377,16 @@ decisions made:
       group/channel false positive where targetUserId=self was rejected.
 7.15. [done] cross-conversation isolation: admin of conv A cannot delete a
       message in conv B (proves why conversationId belongs in the findMany)
-7.16. [open] createConversation happy paths: DM, GROUPCHAT, CHANNEL
-      (append to tests/createConversation.test.js in a separate commit).
-      include a regression: GROUPCHAT with targetUserId = self -> 201 (locks
-      the validator false-positive removed 2026-11-06).
+7.16. [done] createConversation happy paths: DM, GROUPCHAT, CHANNEL:
+      tests/createConversation.test.js, 13 tests.
+      contract:
+        - GROUPCHAT and CHANNEL with conversationName + invited ids -> 201,
+          name/type echoed, dmKey null; creator is OWNER, invitees MEMBER;
+          existingParticipantsIds echoes the valid ids, nonExisting empty.
+        - GROUPCHAT with targetUserId = self -> 201 with exactly one OWNER
+          row: targetUserId is inert for groups (locks the validator false
+          positive removed 2026-11-06).
+        - the DM happy path is the first test (7.13), so no duplicate here.
 7.17. [open] email verification cases (all proven manually 2026-10-11, lock them in):
       signup auto-sends (verificationSent:true); gated route 403 while
       unverified; cooldown 429 on instant resend; wrong code 400; verify

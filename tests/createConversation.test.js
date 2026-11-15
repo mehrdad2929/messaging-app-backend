@@ -6,7 +6,7 @@ const prisma = require('../db/prisma');
 const { resetDb } = require('./helpers/db');
 const { createVerifiedUser, createDm, loginAs } = require('./helpers/factories');
 
-// 7.13 + 7.14 - POST /api/conversations, DM path.
+// 7.13 + 7.14 + 7.16 - POST /api/conversations.
 //
 // DM uniqueness is a DB constraint: dmKey is [lowId, highId] sorted, so the
 // pair is unique in either order. createDm relies on that and maps P2002 on
@@ -40,12 +40,15 @@ async function dmRows() {
     });
 }
 
-async function participantIds(conversationId) {
-    const rows = await prisma.conversationParticipant.findMany({
+async function participantRows(conversationId) {
+    return prisma.conversationParticipant.findMany({
         where: { conversationId },
         orderBy: { userId: 'asc' },
     });
-    return rows.map((row) => row.userId);
+}
+
+async function participantIds(conversationId) {
+    return (await participantRows(conversationId)).map((row) => row.userId);
 }
 
 test('creates one DM with the canonical dmKey and both members', async () => {
@@ -216,4 +219,59 @@ test('leaving a DM as yourself -> 403; membership is immutable for now', async (
     });
     assert.equal(row.deletedAt, null);
     assert.equal(row.deletedById, null);
+});
+
+// 7.16 - happy paths that were only ever exercised by hand.
+for (const conversationType of ['GROUPCHAT', 'CHANNEL']) {
+    test(`creates a ${conversationType}: creator OWNER, invited users MEMBER`, async () => {
+        const alice = await createVerifiedUser();
+        const bob = await createVerifiedUser();
+        const carol = await createVerifiedUser();
+
+        const res = await postConversation(await loginAs(alice), {
+            conversationType,
+            conversationName: 'team alpha',
+            conversationParticipantsIds: [bob.id, carol.id],
+        });
+
+        assert.equal(res.status, 201);
+        assert.equal(res.body.conversation.conversationType, conversationType);
+        assert.equal(res.body.conversation.name, 'team alpha');
+        assert.equal(res.body.conversation.dmKey, null);
+        // order of the echo comes from the DB, so compare as a set
+        assert.deepEqual(
+            [...res.body.existingParticipantsIds].sort((a, b) => a - b),
+            [bob.id, carol.id].sort((a, b) => a - b)
+        );
+        assert.deepEqual(res.body.nonExistingParticipantsIds, []);
+
+        const rows = await participantRows(res.body.conversation.id);
+        assert.deepEqual(
+            rows.map((row) => [row.userId, row.role]),
+            [
+                [alice.id, 'OWNER'],
+                [bob.id, 'MEMBER'],
+                [carol.id, 'MEMBER'],
+            ].sort((a, b) => a[0] - b[0])
+        );
+        assert.equal(await prisma.conversation.count(), 1);
+    });
+}
+
+test('GROUPCHAT with targetUserId = self -> 201, and targetUserId is inert', async () => {
+    // Regression for the validator false positive removed 2026-11-06: a group
+    // may carry targetUserId, and createGroupOrChannel must ignore it.
+    const alice = await createVerifiedUser();
+
+    const res = await postConversation(await loginAs(alice), {
+        conversationType: 'GROUPCHAT',
+        conversationName: 'solo',
+        targetUserId: alice.id,
+    });
+
+    assert.equal(res.status, 201);
+    assert.equal(res.body.conversation.conversationType, 'GROUPCHAT');
+
+    const rows = await participantRows(res.body.conversation.id);
+    assert.deepEqual(rows.map((row) => [row.userId, row.role]), [[alice.id, 'OWNER']]);
 });
