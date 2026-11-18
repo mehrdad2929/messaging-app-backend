@@ -400,6 +400,13 @@ decisions made:
       (NEVER in a real env). SMTP_HOST=127.0.0.1:1 makes the mailer fail fast
       for the same reason. no purge helper was needed: resetDb gives each test
       a fresh user, so only the cooldown test sends twice on purpose.
+# ok opens: ci -> deploy(cd) -> service seperation(refactor) ->frontend(with polling)
+# -> add ws in backend for messaging
+    like this:
+        HTTP request  -> route -> controller ----\
+                                                  >-> service -> prisma
+        socket event  -> realtime handler -------/
+# ->ws(pause and learn more about ws if needed) integeration for frontend (all this while ci/cd)
 
 --- step 4: ci (do last, once step 3 is green locally) ---
 run npx prisma migrate in the ci so the migration exist in the ci
@@ -411,7 +418,6 @@ run npx prisma migrate in the ci so the migration exist in the ci
       in server.js only — require('./app') alone never injects .env (prisma's
       side-effect load covers it). suspect this split first.
 7.21. [open] npx prisma migrate deploy, then npm test
-
 --- websocket readiness (do BEFORE writing ws code) ---
 7.22. [open] move db logic out of controllers into a services/ layer
       (messageService.create(...), conversationService.addParticipant(...)).
