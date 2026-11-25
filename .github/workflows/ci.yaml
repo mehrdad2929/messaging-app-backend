@@ -10,8 +10,24 @@ jobs:
   test:
 
     runs-on: ubuntu-latest
+
     env:
+      NODE_ENV: test
       DATABASE_URL: postgresql://test_user:test_password@localhost:5432/test_db?schema=public
+      PORT: 3000
+      FRONTEND_URL: http://localhost:5173
+      DEV_RETURN_CODE: true
+      SMTP_HOST: 127.0.0.1
+      SMTP_PORT: 1
+      JWT_SECRET: test-jwt-secret
+      OTP_PEPPER:  test-otp-secret
+      GOOGLE_CLIENT_ID: test-google-client-id
+      GOOGLE_CLIENT_SECRET: test-google-client-secret
+      GOOGLE_CALLBACK_URL: http://localhost:3000/auth/google/callback
+      GITHUB_CLIENT_ID: test-github-client-id
+      GITHUB_CLIENT_SECRET: test-github-client-secret
+      GITHUB_CALLBACK_URL: http://localhost:3000/auth/github/callback
+
     services:
       postgres:
         image: postgres:18-alpine
@@ -31,4 +47,6 @@ jobs:
         node-version: 26
         cache: 'npm'
     - run: npm ci
+    - run: npx prisma generate
+    - run: npx prisma migrate deploy 
     - run: npm test
