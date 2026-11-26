@@ -43,6 +43,21 @@ O. [decided: C-lite grace window - built] deleteUser only sets deletedAt; the
    expired tombstone: it returns a plain 401 with no write. An expired OAuth
    identity is REFUSED ("sign up again"), never silently turned into a fresh
    empty account - login intent is not signup intent.
+G. [decided] branch model: trunk-based. `main` is the only long-lived branch
+   and the only one CI watches (push + pull_request on main). work happens on
+   short-lived feat/* branches merged by PR + squash. `develop` was merged into
+   main on 2026-11-26 and deleted local + remote; it comes back only if a
+   staging env needs it, and then it goes into BOTH on.push and on.pull_request
+   arrays AND gets its own ruleset. a branch CI doesn't watch is a branch that
+   rots.
+   enforced by the active "main" repository ruleset (no bypass actors):
+     - require pull request (0 approvals: solo repo)
+     - required status check `test` (the job id in ci.yaml; rename the job and
+       the ruleset silently waits forever, blocking every merge)
+     - block deletion + non-fast-forward
+   consequence: a direct `git push` to main is REJECTED, including one-line
+   doc fixes. that is the point. the required check only appears in the
+   ruleset dropdown after it has run on a PR at least once.
 F. [wontfix-for-now] app.set('trust proxy', 1) stays commented out.
    trigger: the day this deploys behind a proxy, enable it or the rate
    limiter sees one shared IP for all users. it also governs req.ip/req.protocol,
@@ -141,7 +156,7 @@ decisions made:
      (store is in-memory + keyed by ip, so a suite creating 40 messages
       hits the 30/min messageLimiter and later tests get 429. counter never
       resets between tests -> flaky)
-7.5. [done] "test": "node --test --env-file=.env.test --test-concurrency=1 tests/"
+7.5. [done] "test": "node --test --env-file-if-exists=.env.test --test-concurrency=1 tests/"
      plus supertest added as a devDependency. two deliberate changes vs the
      draft above:
        - "tests/" instead of "tests/**/*.test.js": npm runs scripts under sh,
@@ -150,6 +165,9 @@ decisions made:
          so two files would truncate one shared test DB under each other.
      .env.test is the single loader (server.js's dotenvx never runs in tests),
      and it points at messaging_app_db_test.
+     (2026-11-25: --env-file -> --env-file-if-exists so CI can run with no
+     .env.test file at all; the workflow env block supplies every var. needs
+     Node >= 22.9. process env wins over the file, so local runs still use it.)
 7.6. [done] 404 handler returns JSON like every other error
 
 --- step 2: test harness (one time, reused by everything) ---
@@ -410,14 +428,20 @@ decisions made:
 
 --- step 4: ci (do last, once step 3 is green locally) ---
 run npx prisma migrate in the ci so the migration exist in the ci
-7.18. [open] .github/workflows/test.yml
-7.19. [open] postgres:16 service container
-7.20. [open] set DATABASE_URL and JWT_SECRET as real workflow env vars.
+7.18. [done] .github/workflows/ci.yaml
+7.19. [done] postgres:18-alpine service container (matches local 18.7), with
+      a pg_isready health check so steps don't start before the DB accepts
+      connections, and 5432:5432 published so localhost resolves.
+7.20. [done] every var the app reads at require time is in the job env:
+      DATABASE_URL, JWT_SECRET, OTP_PEPPER, DEV_RETURN_CODE, SMTP_*,
+      GOOGLE_*/GITHUB_* placeholders (config/passport.js throws without them).
+      no .env.test in CI at all: --env-file-if-exists makes the file optional
+      and process env wins over it, so the same `npm test` runs in both places.
       CI has no .env file, and undefined JWT_SECRET makes jwt.sign throw,
       which fails every auth test. same symptom, other suspect: dotenvx runs
       in server.js only — require('./app') alone never injects .env (prisma's
       side-effect load covers it). suspect this split first.
-7.21. [open] npx prisma migrate deploy, then npm test
+7.21. [done] npx prisma migrate deploy, then npm test
 --- websocket readiness (do BEFORE writing ws code) ---
 7.22. [open] move db logic out of controllers into a services/ layer
       (messageService.create(...), conversationService.addParticipant(...)).
