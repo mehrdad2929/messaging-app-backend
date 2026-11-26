@@ -2,14 +2,18 @@ name: Backend CI
 
 on:
   push:
-    branches: [ develop,main ]
+    branches: [ main ]
   pull_request:
-    branches: [ develop,main ]
+    branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   test:
 
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     env:
       NODE_ENV: test
