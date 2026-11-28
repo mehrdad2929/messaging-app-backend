@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test --env-file-if-exists=.env.test --test-concurrency=1 tests/"
+    "test:file": "node --test --env-file-if-exists=.env.test --test-concurrency=1"
   },
   "repository": {
     "type": "git",
